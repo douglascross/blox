@@ -1,0 +1,14 @@
+{
+  "generator-bower-package": {
+    "context": {
+      "bower_name": "wyldblox",
+      "bower_title": "wyldblox",
+      "bower_desc": "Wargame renderer.",
+      "bower_version": "0.0.1",
+      "bower_url": "",
+      "bower_repo": "git://.git",
+      "bower_bugs": "/issues",
+      "full_name": "Douglas Cross"
+    }
+  }
+}
