@@ -18,7 +18,10 @@ module.exports = function (grunt) {
     // Configurable paths
     var config = {
         app: 'app',
-        dist: 'dist'
+        dist: 'dist',
+        build: 'build',
+        fileName: 'blox',
+        objectName: 'BLOX'
     };
 
     // Define the configuration for all the tasks
@@ -70,7 +73,7 @@ module.exports = function (grunt) {
                 open: true,
                 livereload: 35729,
                 // Change this to '0.0.0.0' to access the server from outside
-                hostname: 'localhost'
+                hostname: '10.1.1.7'
             },
             livereload: {
                 options: {
@@ -114,6 +117,16 @@ module.exports = function (grunt) {
                         '.tmp',
                         '<%= config.dist %>/*',
                         '!<%= config.dist %>/.git*'
+                    ]
+                }]
+            },
+            build: {
+                files: [{
+                    dot: true,
+                    src: [
+                        '.tmp',
+                        '<%= config.build %>/*',
+                        '!<%= config.build %>/.git*'
                     ]
                 }]
             },
@@ -174,7 +187,7 @@ module.exports = function (grunt) {
                     src: [
                         '<%= config.dist %>/scripts/{,*/}*.js',
                         '<%= config.dist %>/styles/{,*/}*.css',
-                        '<%= config.dist %>/images/{,*/}*.*',
+                        //'<%= config.dist %>/images/{,*/}*.*',
                         '<%= config.dist %>/styles/fonts/{,*/}*.*',
                         '<%= config.dist %>/*.{ico,png}'
                     ]
@@ -271,6 +284,27 @@ module.exports = function (grunt) {
         //     dist: {}
         // },
 
+        uglify: {
+            build: {
+                files: {
+                    '<%= config.build %>/<%= config.fileName %>.min.js': [
+                        '<%= config.build %>/<%= config.fileName %>.js'
+                    ]
+                }
+            }
+        },
+
+        umd: {
+            build: {
+                options: {
+                    src: '<%= config.build %>/<%= config.fileName %>.js',
+                    objectToExport: '<%= config.className %>',
+                    amdModuleId: '<%= config.className %>',
+                    globalAlias: '<%= config.className %>'
+                }
+            }
+        },
+
         // Copies remaining files to places other tasks can use
         copy: {
             dist: {
@@ -285,6 +319,17 @@ module.exports = function (grunt) {
                         'images/{,*/}*.webp',
                         '{,*/}*.html',
                         'styles/fonts/{,*/}*.*'
+                    ]
+                }]
+            },
+            build: {
+                files: [{
+                    expand: true,
+                    dot: true,
+                    cwd: '.tmp/concat/scripts',
+                    dest: '<%= config.build %>',
+                    src: [
+                        '<%= config.fileName %>.js'
                     ]
                 }]
             },
@@ -360,6 +405,16 @@ module.exports = function (grunt) {
         'rev',
         'usemin',
         'htmlmin'
+    ]);
+
+    grunt.registerTask('release', [
+        'clean:build',
+        'clean:dist',
+        'useminPrepare',
+        'concat',
+        'copy:build',
+        'umd:build',
+        'uglify:build'
     ]);
 
     grunt.registerTask('default', [
