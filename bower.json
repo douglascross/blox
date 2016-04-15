@@ -1,8 +1,32 @@
 {
-  "name": "wyldblox",
-  "private": true,
+  "name": "blox",
   "dependencies": {
     "three.js": "threejs#*"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "homepage": "https://github.com/douglascross/blox",
+  "authors": [
+    "Douglas Cross <brother.douglas@gmail.com>"
+  ],
+  "description": "Covert CSG style JSON for use with THREEJS.",
+  "main": "build/blox.js",
+  "keywords": [
+    "CSG",
+    "constructive",
+    "solid",
+    "geometry",
+    "JSON",
+    "threejs",
+    "webgl"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "app/bower_components",
+    "dist",
+    "test",
+    "tests"
+  ]
 }
