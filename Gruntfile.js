@@ -298,9 +298,9 @@ module.exports = function (grunt) {
             build: {
                 options: {
                     src: '<%= config.build %>/<%= config.fileName %>.js',
-                    objectToExport: '<%= config.className %>',
-                    amdModuleId: '<%= config.className %>',
-                    globalAlias: '<%= config.className %>'
+                    objectToExport: '<%= config.objectName %>',
+                    amdModuleId: '<%= config.objectName %>',
+                    globalAlias: '<%= config.objectName %>'
                 }
             }
         },

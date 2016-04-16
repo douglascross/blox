@@ -1,8 +1,8 @@
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
     // AMD. Register as an anonymous module unless amdModuleId is set
-    define([], function () {
-      return (factory());
+    define('BLOX', [], function () {
+      return (root['BLOX'] = factory());
     });
   } else if (typeof exports === 'object') {
     // Node. Does not work with strict CommonJS, but
@@ -10,7 +10,7 @@
     // like Node.
     module.exports = factory();
   } else {
-    factory();
+    root['BLOX'] = factory();
   }
 }(this, function () {
 
@@ -1164,38 +1164,55 @@ window.ThreeBSP = (function() {
 })();
 
 var BLOX = new function() {
+
+    // Internal helper for tiny errors.
+    var reportError = function(info) {
+        console.error('BLOX: ' + info);
+    };
+
+    // Convert a BLOX CSG definition into a THREE Geometry.
     this.toGeometry = function(csg) {
         var geometry;
         if (csg.shape) {
             geometry = ({
-                sphere: function() { return new THREE.SphereGeometry( csg.radius, 36, 36 ); },
+                sphere: function() { return new THREE.SphereGeometry( csg.radius, 32, 32 ); },
                 box: function() { return new THREE.BoxGeometry( csg.x, csg.y, csg.z ); }
             }[csg.shape]||(function(){
-                console.error('Blox: Shape not supported.');
+                reportError('Shape "' + csg.shape + '" not supported, use sphere or box.');
             }))();
         }
         if (csg.subtract) {
             var bsps = [];
             csg.subtract.forEach(function(csg) {
-                var geometry = Blox.toGeometry(csg);
-                bsps.push(new ThreeBSP( geometry ));
-            });
-            var unionBsp;
-            bsps.forEach(function(bsp, index) {
-                if (index) {
-                    if (!unionBsp) {
-                        unionBsp = bsp;
-                    } else {
-                        unionBsp.union(bsp);
-                    }
+                var geometry = BLOX.toGeometry(csg);
+                if (geometry) {
+                    bsps.push(new ThreeBSP(geometry));
                 }
             });
-            var subtractBsp = bsps[0].subtract(unionBsp);
-            geometry = subtractBsp.toGeometry();
+            var firstBsp = geometry ? new ThreeBSP(geometry) : null,
+                unionBsp;
+            if (!firstBsp) {
+                firstBsp = bsps.shift();
+            }
+            if (bsps.length) {
+                bsps.forEach(function (bsp, index) {
+                    if (index || geometry) {
+                        if (!unionBsp) {
+                            unionBsp = bsp;
+                        } else {
+                            unionBsp.union(bsp);
+                        }
+                    }
+                });
+                var subtractBsp = firstBsp.subtract(unionBsp);
+                geometry = subtractBsp.toGeometry();
+            } else {
+                geometry = firstBsp ? firstBsp.toGeometry() : geometry;
+            }
         } else if (csg.union) {
 
         }
-        if (csg.ops) {
+        if (geometry && csg.ops) {
             csg.ops.forEach(function(op) {
                 if (op.scale) {
                     geometry.scale.apply(geometry, op.scale);
@@ -1215,5 +1232,6 @@ var BLOX = new function() {
     }
 }
 
+return BLOX;
 
 }));
