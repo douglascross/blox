@@ -14,1156 +14,660 @@
   }
 }(this, function () {
 
-// Constructive Solid Geometry (CSG) is a modeling technique that uses Boolean
-// operations like union and intersection to combine 3D solids. This library
-// implements CSG operations on meshes elegantly and concisely using BSP trees,
-// and is meant to serve as an easily understandable implementation of the
-// algorithm. All edge cases involving overlapping coplanar polygons in both
-// solids are correctly handled.
-// 
-// Example usage:
-// 
-//     var cube = CSG.cube();
-//     var sphere = CSG.sphere({ radius: 1.3 });
-//     var polygons = cube.subtract(sphere).toPolygons();
-// 
-// ## Implementation Details
-// 
-// All CSG operations are implemented in terms of two functions, `clipTo()` and
-// `invert()`, which remove parts of a BSP tree inside another BSP tree and swap
-// solid and empty space, respectively. To find the union of `a` and `b`, we
-// want to remove everything in `a` inside `b` and everything in `b` inside `a`,
-// then combine polygons from `a` and `b` into one solid:
-// 
-//     a.clipTo(b);
-//     b.clipTo(a);
-//     a.build(b.allPolygons());
-// 
-// The only tricky part is handling overlapping coplanar polygons in both trees.
-// The code above keeps both copies, but we need to keep them in one tree and
-// remove them in the other tree. To remove them from `b` we can clip the
-// inverse of `b` against `a`. The code for union now looks like this:
-// 
-//     a.clipTo(b);
-//     b.clipTo(a);
-//     b.invert();
-//     b.clipTo(a);
-//     b.invert();
-//     a.build(b.allPolygons());
-// 
-// Subtraction and intersection naturally follow from set operations. If
-// union is `A | B`, subtraction is `A - B = ~(~A | B)` and intersection is
-// `A & B = ~(~A | ~B)` where `~` is the complement operator.
-// 
-// ## License
-// 
-// Copyright (c) 2011 Evan Wallace (http://madebyevan.com/), under the MIT license.
+var Vertex = augment(Object, function(uber) {
+    return {
+        constructor: function (x, y, z, normal, uv, negative) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.normal = normal || new THREE.Vector3;
+            this.uv = uv || new THREE.Vector2;
+            this.negative = negative || 0;
+        },
 
-// # class CSG
+        clone: function () {
+            return new Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone(), this.negative);
+        },
 
-// Holds a binary space partition tree representing a 3D solid. Two solids can
-// be combined using the `union()`, `subtract()`, and `intersect()` methods.
+        add: function (vertex) {
+            this.x += vertex.x;
+            this.y += vertex.y;
+            this.z += vertex.z;
+            return this;
+        },
 
-CSG = function() {
-  this.polygons = [];
-};
+        subtract: function (vertex) {
+            this.x -= vertex.x;
+            this.y -= vertex.y;
+            this.z -= vertex.z;
+            return this;
+        },
 
-// Construct a CSG solid from a list of `CSG.Polygon` instances.
-CSG.fromPolygons = function(polygons) {
-  var csg = new CSG();
-  csg.polygons = polygons;
-  return csg;
-};
+        multiplyScalar: function (scalar) {
+            this.x *= scalar;
+            this.y *= scalar;
+            this.z *= scalar;
+            return this;
+        },
 
-CSG.prototype = {
-  clone: function() {
-    var csg = new CSG();
-    csg.polygons = this.polygons.map(function(p) { return p.clone(); });
-    return csg;
-  },
+        cross: function (vertex) {
+            var x = this.x,
+                y = this.y,
+                z = this.z;
+            this.x = y * vertex.z - z * vertex.y;
+            this.y = z * vertex.x - x * vertex.z;
+            this.z = x * vertex.y - y * vertex.x;
+            return this;
+        },
 
-  toPolygons: function() {
-    return this.polygons;
-  },
+        normalize: function () {
+            var length = Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
 
-  // Return a new CSG solid representing space in either this solid or in the
-  // solid `csg`. Neither this solid nor the solid `csg` are modified.
-  // 
-  //     A.union(B)
-  // 
-  //     +-------+            +-------+
-  //     |       |            |       |
-  //     |   A   |            |       |
-  //     |    +--+----+   =   |       +----+
-  //     +----+--+    |       +----+       |
-  //          |   B   |            |       |
-  //          |       |            |       |
-  //          +-------+            +-------+
-  // 
-  union: function(csg) {
-    var a = new CSG.Node(this.clone().polygons);
-    var b = new CSG.Node(csg.clone().polygons);
-    a.clipTo(b);
-    b.clipTo(a);
-    b.invert();
-    b.clipTo(a);
-    b.invert();
-    a.build(b.allPolygons());
-    return CSG.fromPolygons(a.allPolygons());
-  },
+            this.x /= length;
+            this.y /= length;
+            this.z /= length;
 
-  // Return a new CSG solid representing space in this solid but not in the
-  // solid `csg`. Neither this solid nor the solid `csg` are modified.
-  // 
-  //     A.subtract(B)
-  // 
-  //     +-------+            +-------+
-  //     |       |            |       |
-  //     |   A   |            |       |
-  //     |    +--+----+   =   |    +--+
-  //     +----+--+    |       +----+
-  //          |   B   |
-  //          |       |
-  //          +-------+
-  // 
-  subtract: function(csg) {
-    var a = new CSG.Node(this.clone().polygons);
-    var b = new CSG.Node(csg.clone().polygons);
-    a.invert();
-    a.clipTo(b);
-    b.clipTo(a);
-    b.invert();
-    b.clipTo(a);
-    b.invert();
-    a.build(b.allPolygons());
-    a.invert();
-    return CSG.fromPolygons(a.allPolygons());
-  },
+            return this;
+        },
 
-  // Return a new CSG solid representing space both this solid and in the
-  // solid `csg`. Neither this solid nor the solid `csg` are modified.
-  // 
-  //     A.intersect(B)
-  // 
-  //     +-------+
-  //     |       |
-  //     |   A   |
-  //     |    +--+----+   =   +--+
-  //     +----+--+    |       +--+
-  //          |   B   |
-  //          |       |
-  //          +-------+
-  // 
-  intersect: function(csg) {
-    var a = new CSG.Node(this.clone().polygons);
-    var b = new CSG.Node(csg.clone().polygons);
-    a.invert();
-    b.clipTo(a);
-    b.invert();
-    a.clipTo(b);
-    b.clipTo(a);
-    a.build(b.allPolygons());
-    a.invert();
-    return CSG.fromPolygons(a.allPolygons());
-  },
+        dot: function (vertex) {
+            return this.x * vertex.x + this.y * vertex.y + this.z * vertex.z;
+        },
 
-  // Return a new CSG solid with solid and empty space switched. This solid is
-  // not modified.
-  inverse: function() {
-    var csg = this.clone();
-    csg.polygons.map(function(p) { p.flip(); });
-    return csg;
-  }
-};
+        lerp: function (a, t) {
+            this.add(a.clone().subtract(this).multiplyScalar(t));
+            this.normal.add(a.normal.clone().sub(this.normal).multiplyScalar(t));
+            this.uv.add(a.uv.clone().sub(this.uv).multiplyScalar(t));
+            return this;
+        },
 
-// Construct an axis-aligned solid cuboid. Optional parameters are `center` and
-// `radius`, which default to `[0, 0, 0]` and `[1, 1, 1]`. The radius can be
-// specified using a single number or a list of three numbers, one for each axis.
-// 
-// Example code:
-// 
-//     var cube = CSG.cube({
-//       center: [0, 0, 0],
-//       radius: 1
-//     });
-CSG.cube = function(options) {
-  options = options || {};
-  var c = new CSG.Vector(options.center || [0, 0, 0]);
-  var r = !options.radius ? [1, 1, 1] : options.radius.length ?
-           options.radius : [options.radius, options.radius, options.radius];
-  return CSG.fromPolygons([
-    [[0, 4, 6, 2], [-1, 0, 0]],
-    [[1, 3, 7, 5], [+1, 0, 0]],
-    [[0, 1, 5, 4], [0, -1, 0]],
-    [[2, 6, 7, 3], [0, +1, 0]],
-    [[0, 2, 3, 1], [0, 0, -1]],
-    [[4, 5, 7, 6], [0, 0, +1]]
-  ].map(function(info) {
-    return new CSG.Polygon(info[0].map(function(i) {
-      var pos = new CSG.Vector(
-        c.x + r[0] * (2 * !!(i & 1) - 1),
-        c.y + r[1] * (2 * !!(i & 2) - 1),
-        c.z + r[2] * (2 * !!(i & 4) - 1)
-      );
-      return new CSG.Vertex(pos, new CSG.Vector(info[1]));
-    }));
-  }));
-};
+        interpolate: function (other, t) {
+            return this.clone().lerp(other, t);
+        },
 
-// Construct a solid sphere. Optional parameters are `center`, `radius`,
-// `slices`, and `stacks`, which default to `[0, 0, 0]`, `1`, `16`, and `8`.
-// The `slices` and `stacks` parameters control the tessellation along the
-// longitude and latitude directions.
-// 
-// Example usage:
-// 
-//     var sphere = CSG.sphere({
-//       center: [0, 0, 0],
-//       radius: 1,
-//       slices: 16,
-//       stacks: 8
-//     });
-CSG.sphere = function(options) {
-  options = options || {};
-  var c = new CSG.Vector(options.center || [0, 0, 0]);
-  var r = options.radius || 1;
-  var slices = options.slices || 16;
-  var stacks = options.stacks || 8;
-  var polygons = [], vertices;
-  function vertex(theta, phi) {
-    theta *= Math.PI * 2;
-    phi *= Math.PI;
-    var dir = new CSG.Vector(
-      Math.cos(theta) * Math.sin(phi),
-      Math.cos(phi),
-      Math.sin(theta) * Math.sin(phi)
-    );
-    vertices.push(new CSG.Vertex(c.plus(dir.times(r)), dir));
-  }
-  for (var i = 0; i < slices; i++) {
-    for (var j = 0; j < stacks; j++) {
-      vertices = [];
-      vertex(i / slices, j / stacks);
-      if (j > 0) vertex((i + 1) / slices, j / stacks);
-      if (j < stacks - 1) vertex((i + 1) / slices, (j + 1) / stacks);
-      vertex(i / slices, (j + 1) / stacks);
-      polygons.push(new CSG.Polygon(vertices));
-    }
-  }
-  return CSG.fromPolygons(polygons);
-};
+        applyMatrix4: function (m) {
 
-// Construct a solid cylinder. Optional parameters are `start`, `end`,
-// `radius`, and `slices`, which default to `[0, -1, 0]`, `[0, 1, 0]`, `1`, and
-// `16`. The `slices` parameter controls the tessellation.
-// 
-// Example usage:
-// 
-//     var cylinder = CSG.cylinder({
-//       start: [0, -1, 0],
-//       end: [0, 1, 0],
-//       radius: 1,
-//       slices: 16
-//     });
-CSG.cylinder = function(options) {
-  options = options || {};
-  var s = new CSG.Vector(options.start || [0, -1, 0]);
-  var e = new CSG.Vector(options.end || [0, 1, 0]);
-  var ray = e.minus(s);
-  var r = options.radius || 1;
-  var slices = options.slices || 16;
-  var axisZ = ray.unit(), isY = (Math.abs(axisZ.y) > 0.5);
-  var axisX = new CSG.Vector(isY, !isY, 0).cross(axisZ).unit();
-  var axisY = axisX.cross(axisZ).unit();
-  var start = new CSG.Vertex(s, axisZ.negated());
-  var end = new CSG.Vertex(e, axisZ.unit());
-  var polygons = [];
-  function point(stack, slice, normalBlend) {
-    var angle = slice * Math.PI * 2;
-    var out = axisX.times(Math.cos(angle)).plus(axisY.times(Math.sin(angle)));
-    var pos = s.plus(ray.times(stack)).plus(out.times(r));
-    var normal = out.times(1 - Math.abs(normalBlend)).plus(axisZ.times(normalBlend));
-    return new CSG.Vertex(pos, normal);
-  }
-  for (var i = 0; i < slices; i++) {
-    var t0 = i / slices, t1 = (i + 1) / slices;
-    polygons.push(new CSG.Polygon([start, point(0, t0, -1), point(0, t1, -1)]));
-    polygons.push(new CSG.Polygon([point(0, t1, 0), point(0, t0, 0), point(1, t0, 0), point(1, t1, 0)]));
-    polygons.push(new CSG.Polygon([end, point(1, t1, 1), point(1, t0, 1)]));
-  }
-  return CSG.fromPolygons(polygons);
-};
+            // input: THREE.Matrix4 affine matrix
 
-// # class Vector
+            var x = this.x, y = this.y, z = this.z;
 
-// Represents a 3D vector.
-// 
-// Example usage:
-// 
-//     new CSG.Vector(1, 2, 3);
-//     new CSG.Vector([1, 2, 3]);
-//     new CSG.Vector({ x: 1, y: 2, z: 3 });
+            var e = m.elements;
 
-CSG.Vector = function(x, y, z) {
-  if (arguments.length == 3) {
-    this.x = x;
-    this.y = y;
-    this.z = z;
-  } else if ('x' in x) {
-    this.x = x.x;
-    this.y = x.y;
-    this.z = x.z;
-  } else {
-    this.x = x[0];
-    this.y = x[1];
-    this.z = x[2];
-  }
-};
+            this.x = e[0] * x + e[4] * y + e[8] * z + e[12];
+            this.y = e[1] * x + e[5] * y + e[9] * z + e[13];
+            this.z = e[2] * x + e[6] * y + e[10] * z + e[14];
 
-CSG.Vector.prototype = {
-  clone: function() {
-    return new CSG.Vector(this.x, this.y, this.z);
-  },
+            return this;
+        },
 
-  negated: function() {
-    return new CSG.Vector(-this.x, -this.y, -this.z);
-  },
+        flagPositive: function() {
+            this.negative = 1;
+        },
 
-  plus: function(a) {
-    return new CSG.Vector(this.x + a.x, this.y + a.y, this.z + a.z);
-  },
+        flagNegative: function() {
+            this.negative = -1;
+        },
 
-  minus: function(a) {
-    return new CSG.Vector(this.x - a.x, this.y - a.y, this.z - a.z);
-  },
-
-  times: function(a) {
-    return new CSG.Vector(this.x * a, this.y * a, this.z * a);
-  },
-
-  dividedBy: function(a) {
-    return new CSG.Vector(this.x / a, this.y / a, this.z / a);
-  },
-
-  dot: function(a) {
-    return this.x * a.x + this.y * a.y + this.z * a.z;
-  },
-
-  lerp: function(a, t) {
-    return this.plus(a.minus(this).times(t));
-  },
-
-  length: function() {
-    return Math.sqrt(this.dot(this));
-  },
-
-  unit: function() {
-    return this.dividedBy(this.length());
-  },
-
-  cross: function(a) {
-    return new CSG.Vector(
-      this.y * a.z - this.z * a.y,
-      this.z * a.x - this.x * a.z,
-      this.x * a.y - this.y * a.x
-    );
-  }
-};
-
-// # class Vertex
-
-// Represents a vertex of a polygon. Use your own vertex class instead of this
-// one to provide additional features like texture coordinates and vertex
-// colors. Custom vertex classes need to provide a `pos` property and `clone()`,
-// `flip()`, and `interpolate()` methods that behave analogous to the ones
-// defined by `CSG.Vertex`. This class provides `normal` so convenience
-// functions like `CSG.sphere()` can return a smooth vertex normal, but `normal`
-// is not used anywhere else.
-
-CSG.Vertex = function(pos, normal) {
-  this.pos = new CSG.Vector(pos);
-  this.normal = new CSG.Vector(normal);
-};
-
-CSG.Vertex.prototype = {
-  clone: function() {
-    return new CSG.Vertex(this.pos.clone(), this.normal.clone());
-  },
-
-  // Invert all orientation-specific data (e.g. vertex normal). Called when the
-  // orientation of a polygon is flipped.
-  flip: function() {
-    this.normal = this.normal.negated();
-  },
-
-  // Create a new vertex between this vertex and `other` by linearly
-  // interpolating all properties using a parameter of `t`. Subclasses should
-  // override this to interpolate additional properties.
-  interpolate: function(other, t) {
-    return new CSG.Vertex(
-      this.pos.lerp(other.pos, t),
-      this.normal.lerp(other.normal, t)
-    );
-  }
-};
-
-// # class Plane
-
-// Represents a plane in 3D space.
-
-CSG.Plane = function(normal, w) {
-  this.normal = normal;
-  this.w = w;
-};
-
-// `CSG.Plane.EPSILON` is the tolerance used by `splitPolygon()` to decide if a
-// point is on the plane.
-CSG.Plane.EPSILON = 1e-5;
-
-CSG.Plane.fromPoints = function(a, b, c) {
-  var n = b.minus(a).cross(c.minus(a)).unit();
-  return new CSG.Plane(n, n.dot(a));
-};
-
-CSG.Plane.prototype = {
-  clone: function() {
-    return new CSG.Plane(this.normal.clone(), this.w);
-  },
-
-  flip: function() {
-    this.normal = this.normal.negated();
-    this.w = -this.w;
-  },
-
-  // Split `polygon` by this plane if needed, then put the polygon or polygon
-  // fragments in the appropriate lists. Coplanar polygons go into either
-  // `coplanarFront` or `coplanarBack` depending on their orientation with
-  // respect to this plane. Polygons in front or in back of this plane go into
-  // either `front` or `back`.
-  splitPolygon: function(polygon, coplanarFront, coplanarBack, front, back) {
-    var COPLANAR = 0;
-    var FRONT = 1;
-    var BACK = 2;
-    var SPANNING = 3;
-
-    // Classify each point as well as the entire polygon into one of the above
-    // four classes.
-    var polygonType = 0;
-    var types = [];
-    for (var i = 0; i < polygon.vertices.length; i++) {
-      var t = this.normal.dot(polygon.vertices[i].pos) - this.w;
-      var type = (t < -CSG.Plane.EPSILON) ? BACK : (t > CSG.Plane.EPSILON) ? FRONT : COPLANAR;
-      polygonType |= type;
-      types.push(type);
-    }
-
-    // Put the polygon in the correct list, splitting it when necessary.
-    switch (polygonType) {
-      case COPLANAR:
-        (this.normal.dot(polygon.plane.normal) > 0 ? coplanarFront : coplanarBack).push(polygon);
-        break;
-      case FRONT:
-        front.push(polygon);
-        break;
-      case BACK:
-        back.push(polygon);
-        break;
-      case SPANNING:
-        var f = [], b = [];
-        for (var i = 0; i < polygon.vertices.length; i++) {
-          var j = (i + 1) % polygon.vertices.length;
-          var ti = types[i], tj = types[j];
-          var vi = polygon.vertices[i], vj = polygon.vertices[j];
-          if (ti != BACK) f.push(vi);
-          if (ti != FRONT) b.push(ti != BACK ? vi.clone() : vi);
-          if ((ti | tj) == SPANNING) {
-            var t = (this.w - this.normal.dot(vi.pos)) / this.normal.dot(vj.pos.minus(vi.pos));
-            var v = vi.interpolate(vj, t);
-            f.push(v);
-            b.push(v.clone());
-          }
+        reportNegative: function() {
+            return this.negative;
         }
-        if (f.length >= 3) front.push(new CSG.Polygon(f, polygon.shared));
-        if (b.length >= 3) back.push(new CSG.Polygon(b, polygon.shared));
-        break;
-    }
-  }
-};
+    };
+});
 
-// # class Polygon
+var Polygon = augment(Object, function(uber) {
 
-// Represents a convex polygon. The vertices used to initialize a polygon must
-// be coplanar and form a convex loop. They do not have to be `CSG.Vertex`
-// instances but they must behave similarly (duck typing can be used for
-// customization).
-// 
-// Each convex polygon has a `shared` property, which is shared between all
-// polygons that are clones of each other or were split from the same polygon.
-// This can be used to define per-polygon properties (such as surface color).
+    var EPSILON = 1e-5,
+        COPLANAR = 0,
+        FRONT = 1,
+        BACK = 2,
+        SPANNING = 3;
 
-CSG.Polygon = function(vertices, shared) {
-  this.vertices = vertices;
-  this.shared = shared;
-  this.plane = CSG.Plane.fromPoints(vertices[0].pos, vertices[1].pos, vertices[2].pos);
-};
+    return {
+        constructor: function(vertices) {
+            if ( !( vertices instanceof Array ) ) {
+                vertices = [];
+            }
 
-CSG.Polygon.prototype = {
-  clone: function() {
-    var vertices = this.vertices.map(function(v) { return v.clone(); });
-    return new CSG.Polygon(vertices, this.shared);
-  },
+            this.vertices = vertices;
+            if ( vertices.length > 0 ) {
+                this.calculateProperties();
+            } else {
+                this.normal = this.w = undefined;
+            }
 
-  flip: function() {
-    this.vertices.reverse().map(function(v) { v.flip(); });
-    this.plane.flip();
-  }
-};
+            this.negative = 0;
+        },
 
-// # class Node
+        calculateProperties: function() {
+            var a = this.vertices[0],
+                b = this.vertices[1],
+                c = this.vertices[2];
 
-// Holds a node in a BSP tree. A BSP tree is built from a collection of polygons
-// by picking a polygon to split along. That polygon (and all other coplanar
-// polygons) are added directly to that node and the other polygons are added to
-// the front and/or back subtrees. This is not a leafy BSP tree since there is
-// no distinction between internal and leaf nodes.
+            this.normal = b.clone().subtract( a ).cross(
+                c.clone().subtract( a )
+            ).normalize();
 
-CSG.Node = function(polygons) {
-  this.plane = null;
-  this.front = null;
-  this.back = null;
-  this.polygons = [];
-  if (polygons) this.build(polygons);
-};
+            this.w = this.normal.clone().dot( a );
 
-CSG.Node.prototype = {
-  clone: function() {
-    var node = new CSG.Node();
-    node.plane = this.plane && this.plane.clone();
-    node.front = this.front && this.front.clone();
-    node.back = this.back && this.back.clone();
-    node.polygons = this.polygons.map(function(p) { return p.clone(); });
-    return node;
-  },
+            return this;
+        },
 
-  // Convert solid space to empty space and empty space to solid space.
-  invert: function() {
-    for (var i = 0; i < this.polygons.length; i++) {
-      this.polygons[i].flip();
-    }
-    this.plane.flip();
-    if (this.front) this.front.invert();
-    if (this.back) this.back.invert();
-    var temp = this.front;
-    this.front = this.back;
-    this.back = temp;
-  },
+        clone: function() {
+            var i, vertice_count,
+                polygon = new Polygon;
 
-  // Recursively remove all polygons in `polygons` that are inside this BSP
-  // tree.
-  clipPolygons: function(polygons) {
-    if (!this.plane) return polygons.slice();
-    var front = [], back = [];
-    for (var i = 0; i < polygons.length; i++) {
-      this.plane.splitPolygon(polygons[i], front, back, front, back);
-    }
-    if (this.front) front = this.front.clipPolygons(front);
-    if (this.back) back = this.back.clipPolygons(back);
-    else back = [];
-    return front.concat(back);
-  },
+            for ( i = 0, vertice_count = this.vertices.length; i < vertice_count; i++ ) {
+                polygon.vertices.push( this.vertices[i].clone() );
+            };
+            polygon.calculateProperties();
 
-  // Remove all polygons in this BSP tree that are inside the other BSP tree
-  // `bsp`.
-  clipTo: function(bsp) {
-    this.polygons = bsp.clipPolygons(this.polygons);
-    if (this.front) this.front.clipTo(bsp);
-    if (this.back) this.back.clipTo(bsp);
-  },
+            polygon.negative = this.negative;
 
-  // Return a list of all polygons in this BSP tree.
-  allPolygons: function() {
-    var polygons = this.polygons.slice();
-    if (this.front) polygons = polygons.concat(this.front.allPolygons());
-    if (this.back) polygons = polygons.concat(this.back.allPolygons());
-    return polygons;
-  },
+            return polygon;
+        },
 
-  // Build a BSP tree out of `polygons`. When called on an existing tree, the
-  // new polygons are filtered down to the bottom of the tree and become new
-  // nodes there. Each set of polygons is partitioned using the first polygon
-  // (no heuristic is used to pick a good split).
-  build: function(polygons) {
-    if (!polygons.length) return;
-    if (!this.plane) this.plane = polygons[0].plane.clone();
-    var front = [], back = [];
-    for (var i = 0; i < polygons.length; i++) {
-      this.plane.splitPolygon(polygons[i], this.polygons, this.polygons, front, back);
-    }
-    if (front.length) {
-      if (!this.front) this.front = new CSG.Node();
-      this.front.build(front);
-    }
-    if (back.length) {
-      if (!this.back) this.back = new CSG.Node();
-      this.back.build(back);
-    }
-  }
-};
+        flip: function() {
+            var i, vertices = [];
 
-'use strict';
-window.ThreeBSP = (function() {
-	
-	var ThreeBSP,
-		EPSILON = 1e-5,
-		COPLANAR = 0,
-		FRONT = 1,
-		BACK = 2,
-		SPANNING = 3;
-	
-	ThreeBSP = function( geometry ) {
-		// Convert THREE.Geometry to ThreeBSP
-		var i, _length_i,
-			face, vertex, faceVertexUvs, uvs,
-			polygon,
-			polygons = [],
-			tree;
-	
-		if ( geometry instanceof THREE.Geometry ) {
-			this.matrix = new THREE.Matrix4;
-		} else if ( geometry instanceof THREE.Mesh ) {
-			// #todo: add hierarchy support
-			geometry.updateMatrix();
-			this.matrix = geometry.matrix.clone();
-			geometry = geometry.geometry;
-		} else if ( geometry instanceof ThreeBSP.Node ) {
-			this.tree = geometry;
-			this.matrix = new THREE.Matrix4;
-			return this;
-		} else {
-			throw 'ThreeBSP: Given geometry is unsupported';
-		}
-	
-		for ( i = 0, _length_i = geometry.faces.length; i < _length_i; i++ ) {
-			face = geometry.faces[i];
-			faceVertexUvs = geometry.faceVertexUvs[0][i];
-			polygon = new ThreeBSP.Polygon;
-			
-			if ( face instanceof THREE.Face3 ) {
-				vertex = geometry.vertices[ face.a ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-				
-				vertex = geometry.vertices[ face.b ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-				
-				vertex = geometry.vertices[ face.c ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-			} else if ( typeof THREE.Face4 ) {
-				vertex = geometry.vertices[ face.a ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-				
-				vertex = geometry.vertices[ face.b ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-				
-				vertex = geometry.vertices[ face.c ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-				
-				vertex = geometry.vertices[ face.d ];
-                                uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[3].x, faceVertexUvs[3].y ) : null;
-                                vertex = new ThreeBSP.Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[3], uvs );
-				vertex.applyMatrix4(this.matrix);
-				polygon.vertices.push( vertex );
-			} else {
-				throw 'Invalid face type at index ' + i;
-			}
-			
-			polygon.calculateProperties();
-			polygons.push( polygon );
-		};
-	
-		this.tree = new ThreeBSP.Node( polygons );
-	};
-	ThreeBSP.prototype.subtract = function( other_tree ) {
-		var a = this.tree.clone(),
-			b = other_tree.tree.clone();
-		
-		a.invert();
-		a.clipTo( b );
-		b.clipTo( a );
-		b.invert();
-		b.clipTo( a );
-		b.invert();
-		a.build( b.allPolygons() );
-		a.invert();
-		a = new ThreeBSP( a );
-		a.matrix = this.matrix;
-		return a;
-	};
-	ThreeBSP.prototype.union = function( other_tree ) {
-		var a = this.tree.clone(),
-			b = other_tree.tree.clone();
-		
-		a.clipTo( b );
-		b.clipTo( a );
-		b.invert();
-		b.clipTo( a );
-		b.invert();
-		a.build( b.allPolygons() );
-		a = new ThreeBSP( a );
-		a.matrix = this.matrix;
-		return a;
-	};
-	ThreeBSP.prototype.intersect = function( other_tree ) {
-		var a = this.tree.clone(),
-			b = other_tree.tree.clone();
-		
-		a.invert();
-		b.clipTo( a );
-		b.invert();
-		a.clipTo( b );
-		b.clipTo( a );
-		a.build( b.allPolygons() );
-		a.invert();
-		a = new ThreeBSP( a );
-		a.matrix = this.matrix;
-		return a;
-	};
-	ThreeBSP.prototype.toGeometry = function() {
-		var i, j,
-			matrix = new THREE.Matrix4().getInverse( this.matrix ),
-			geometry = new THREE.Geometry(),
-			polygons = this.tree.allPolygons(),
-			polygon_count = polygons.length,
-			polygon, polygon_vertice_count,
-			vertice_dict = {},
-			vertex_idx_a, vertex_idx_b, vertex_idx_c,
-			vertex, face,
-			verticeUvs;
-	
-		for ( i = 0; i < polygon_count; i++ ) {
-			polygon = polygons[i];
-			polygon_vertice_count = polygon.vertices.length;
-			
-			for ( j = 2; j < polygon_vertice_count; j++ ) {
-				verticeUvs = [];
-				
-				vertex = polygon.vertices[0];
-				verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
-				vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
-				vertex.applyMatrix4(matrix);
-				
-				if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
-					vertex_idx_a = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ];
-				} else {
-					geometry.vertices.push( vertex );
-					vertex_idx_a = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] = geometry.vertices.length - 1;
-				}
-				
-				vertex = polygon.vertices[j-1];
-				verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
-				vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
-				vertex.applyMatrix4(matrix);
-				if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
-					vertex_idx_b = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ];
-				} else {
-					geometry.vertices.push( vertex );
-					vertex_idx_b = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] = geometry.vertices.length - 1;
-				}
-				
-				vertex = polygon.vertices[j];
-				verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
-				vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
-				vertex.applyMatrix4(matrix);
-				if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
-					vertex_idx_c = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ];
-				} else {
-					geometry.vertices.push( vertex );
-					vertex_idx_c = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] = geometry.vertices.length - 1;
-				}
-				
-				face = new THREE.Face3(
-					vertex_idx_a,
-					vertex_idx_b,
-					vertex_idx_c,
-					new THREE.Vector3( polygon.normal.x, polygon.normal.y, polygon.normal.z )
-				);
-				
-				geometry.faces.push( face );
-				geometry.faceVertexUvs[0].push( verticeUvs );
-			}
-			
-		}
-		return geometry;
-	};
-	ThreeBSP.prototype.toMesh = function( material ) {
-		var geometry = this.toGeometry(),
-			mesh = new THREE.Mesh( geometry, material );
-		
-		mesh.position.setFromMatrixPosition( this.matrix );
-		mesh.rotation.setFromRotationMatrix( this.matrix );
-		
-		return mesh;
-	};
-	
-	
-	ThreeBSP.Polygon = function( vertices, normal, w ) {
-		if ( !( vertices instanceof Array ) ) {
-			vertices = [];
-		}
-		
-		this.vertices = vertices;
-		if ( vertices.length > 0 ) {
-			this.calculateProperties();
-		} else {
-			this.normal = this.w = undefined;
-		}
-	};
-	ThreeBSP.Polygon.prototype.calculateProperties = function() {
-		var a = this.vertices[0],
-			b = this.vertices[1],
-			c = this.vertices[2];
-			
-		this.normal = b.clone().subtract( a ).cross(
-			c.clone().subtract( a )
-		).normalize();
-		
-		this.w = this.normal.clone().dot( a );
-		
-		return this;
-	};
-	ThreeBSP.Polygon.prototype.clone = function() {
-		var i, vertice_count,
-			polygon = new ThreeBSP.Polygon;
-		
-		for ( i = 0, vertice_count = this.vertices.length; i < vertice_count; i++ ) {
-			polygon.vertices.push( this.vertices[i].clone() );
-		};
-		polygon.calculateProperties();
-		
-		return polygon;
-	};
-	
-	ThreeBSP.Polygon.prototype.flip = function() {
-		var i, vertices = [];
-		
-		this.normal.multiplyScalar( -1 );
-		this.w *= -1;
-		
-		for ( i = this.vertices.length - 1; i >= 0; i-- ) {
-			vertices.push( this.vertices[i] );
-		};
-		this.vertices = vertices;
-		
-		return this;
-	};
-	ThreeBSP.Polygon.prototype.classifyVertex = function( vertex ) {  
-		var side_value = this.normal.dot( vertex ) - this.w;
-		
-		if ( side_value < -EPSILON ) {
-			return BACK;
-		} else if ( side_value > EPSILON ) {
-			return FRONT;
-		} else {
-			return COPLANAR;
-		}
-	};
-	ThreeBSP.Polygon.prototype.classifySide = function( polygon ) {
-		var i, vertex, classification,
-			num_positive = 0,
-			num_negative = 0,
-			vertice_count = polygon.vertices.length;
-		
-		for ( i = 0; i < vertice_count; i++ ) {
-			vertex = polygon.vertices[i];
-			classification = this.classifyVertex( vertex );
-			if ( classification === FRONT ) {
-				num_positive++;
-			} else if ( classification === BACK ) {
-				num_negative++;
-			}
-		}
-		
-		if ( num_positive > 0 && num_negative === 0 ) {
-			return FRONT;
-		} else if ( num_positive === 0 && num_negative > 0 ) {
-			return BACK;
-		} else if ( num_positive === 0 && num_negative === 0 ) {
-			return COPLANAR;
-		} else {
-			return SPANNING;
-		}
-	};
-	ThreeBSP.Polygon.prototype.splitPolygon = function( polygon, coplanar_front, coplanar_back, front, back ) {
-		var classification = this.classifySide( polygon );
-		
-		if ( classification === COPLANAR ) {
-			
-			( this.normal.dot( polygon.normal ) > 0 ? coplanar_front : coplanar_back ).push( polygon );
-			
-		} else if ( classification === FRONT ) {
-			
-			front.push( polygon );
-			
-		} else if ( classification === BACK ) {
-			
-			back.push( polygon );
-			
-		} else {
-			
-			var vertice_count,
-				i, j, ti, tj, vi, vj,
-				t, v,
-				f = [],
-				b = [];
-			
-			for ( i = 0, vertice_count = polygon.vertices.length; i < vertice_count; i++ ) {
-				
-				j = (i + 1) % vertice_count;
-				vi = polygon.vertices[i];
-				vj = polygon.vertices[j];
-				ti = this.classifyVertex( vi );
-				tj = this.classifyVertex( vj );
-				
-				if ( ti != BACK ) f.push( vi );
-				if ( ti != FRONT ) b.push( vi );
-				if ( (ti | tj) === SPANNING ) {
-					t = ( this.w - this.normal.dot( vi ) ) / this.normal.dot( vj.clone().subtract( vi ) );
-					v = vi.interpolate( vj, t );
-					f.push( v );
-					b.push( v );
-				}
-			}
-			
-			
-			if ( f.length >= 3 ) front.push( new ThreeBSP.Polygon( f ).calculateProperties() );
-			if ( b.length >= 3 ) back.push( new ThreeBSP.Polygon( b ).calculateProperties() );
-		}
-	};
-	
-	ThreeBSP.Vertex = function( x, y, z, normal, uv ) {
-		this.x = x;
-		this.y = y;
-		this.z = z;
-		this.normal = normal || new THREE.Vector3;
-		this.uv = uv || new THREE.Vector2;
-	};
-	ThreeBSP.Vertex.prototype.clone = function() {
-		return new ThreeBSP.Vertex( this.x, this.y, this.z, this.normal.clone(), this.uv.clone() );
-	};
-	ThreeBSP.Vertex.prototype.add = function( vertex ) {
-		this.x += vertex.x;
-		this.y += vertex.y;
-		this.z += vertex.z;
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.subtract = function( vertex ) {
-		this.x -= vertex.x;
-		this.y -= vertex.y;
-		this.z -= vertex.z;
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.multiplyScalar = function( scalar ) {
-		this.x *= scalar;
-		this.y *= scalar;
-		this.z *= scalar;
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.cross = function( vertex ) {
-		var x = this.x,
-			y = this.y,
-			z = this.z;
+            this.normal.multiplyScalar( -1 );
+            this.w *= -1;
 
-		this.x = y * vertex.z - z * vertex.y;
-		this.y = z * vertex.x - x * vertex.z;
-		this.z = x * vertex.y - y * vertex.x;
-		
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.normalize = function() {
-		var length = Math.sqrt( this.x * this.x + this.y * this.y + this.z * this.z );
-		
-		this.x /= length;
-		this.y /= length;
-		this.z /= length;
-		
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.dot = function( vertex ) {
-		return this.x * vertex.x + this.y * vertex.y + this.z * vertex.z;
-	};
-	ThreeBSP.Vertex.prototype.lerp = function( a, t ) {
-		this.add(
-			a.clone().subtract( this ).multiplyScalar( t )
-		);
-		
-		this.normal.add(
-			a.normal.clone().sub( this.normal ).multiplyScalar( t )
-		);
-		
-		this.uv.add(
-			a.uv.clone().sub( this.uv ).multiplyScalar( t )
-		);
-		
-		return this;
-	};
-	ThreeBSP.Vertex.prototype.interpolate = function( other, t ) {
-		return this.clone().lerp( other, t );
-	};
-	ThreeBSP.Vertex.prototype.applyMatrix4 = function ( m ) {
+            for ( i = this.vertices.length - 1; i >= 0; i-- ) {
+                vertices.push( this.vertices[i] );
+            };
+            this.vertices = vertices;
 
-		// input: THREE.Matrix4 affine matrix
+            return this;
+        },
 
-		var x = this.x, y = this.y, z = this.z;
+        classifyVertex: function( vertex ) {
+            var side_value = this.normal.dot( vertex ) - this.w;
 
-		var e = m.elements;
+            if ( side_value < -EPSILON ) {
+                return BACK;
+            } else if ( side_value > EPSILON ) {
+                return FRONT;
+            } else {
+                return COPLANAR;
+            }
+        },
 
-		this.x = e[0] * x + e[4] * y + e[8]  * z + e[12];
-		this.y = e[1] * x + e[5] * y + e[9]  * z + e[13];
-		this.z = e[2] * x + e[6] * y + e[10] * z + e[14];
+        classifySide: function(polygon) {
+            var i, vertex, classification,
+                num_positive = 0,
+                num_negative = 0,
+                vertice_count = polygon.vertices.length;
 
-		return this;
+            for ( i = 0; i < vertice_count; i++ ) {
+                vertex = polygon.vertices[i];
+                classification = this.classifyVertex( vertex );
+                if ( classification === FRONT ) {
+                    num_positive++;
+                } else if ( classification === BACK ) {
+                    num_negative++;
+                }
+            }
 
-	}
-	
-	
-	ThreeBSP.Node = function( polygons ) {
-		var i, polygon_count,
-			front = [],
-			back = [];
+            if ( num_positive > 0 && num_negative === 0 ) {
+                return FRONT;
+            } else if ( num_positive === 0 && num_negative > 0 ) {
+                return BACK;
+            } else if ( num_positive === 0 && num_negative === 0 ) {
+                return COPLANAR;
+            } else {
+                return SPANNING;
+            }
+        },
 
-		this.polygons = [];
-		this.front = this.back = undefined;
-		
-		if ( !(polygons instanceof Array) || polygons.length === 0 ) return;
+        splitPolygon: function(polygon, coplanar_front, coplanar_back, front, back) {
+            var classification = this.classifySide( polygon );
 
-		this.divider = polygons[0].clone();
-		
-		for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
-			this.divider.splitPolygon( polygons[i], this.polygons, this.polygons, front, back );
-		}   
-		
-		if ( front.length > 0 ) {
-			this.front = new ThreeBSP.Node( front );
-		}
-		
-		if ( back.length > 0 ) {
-			this.back = new ThreeBSP.Node( back );
-		}
-	};
-	ThreeBSP.Node.isConvex = function( polygons ) {
-		var i, j;
-		for ( i = 0; i < polygons.length; i++ ) {
-			for ( j = 0; j < polygons.length; j++ ) {
-				if ( i !== j && polygons[i].classifySide( polygons[j] ) !== BACK ) {
-					return false;
-				}
-			}
-		}
-		return true;
-	};
-	ThreeBSP.Node.prototype.build = function( polygons ) {
-		var i, polygon_count,
-			front = [],
-			back = [];
-		
-		if ( !this.divider ) {
-			this.divider = polygons[0].clone();
-		}
+            if ( classification === COPLANAR ) {
 
-		for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
-			this.divider.splitPolygon( polygons[i], this.polygons, this.polygons, front, back );
-		}   
-		
-		if ( front.length > 0 ) {
-			if ( !this.front ) this.front = new ThreeBSP.Node();
-			this.front.build( front );
-		}
-		
-		if ( back.length > 0 ) {
-			if ( !this.back ) this.back = new ThreeBSP.Node();
-			this.back.build( back );
-		}
-	};
-	ThreeBSP.Node.prototype.allPolygons = function() {
-		var polygons = this.polygons.slice();
-		if ( this.front ) polygons = polygons.concat( this.front.allPolygons() );
-		if ( this.back ) polygons = polygons.concat( this.back.allPolygons() );
-		return polygons;
-	};
-	ThreeBSP.Node.prototype.clone = function() {
-		var node = new ThreeBSP.Node();
-		
-		node.divider = this.divider.clone();
-		node.polygons = this.polygons.map( function( polygon ) { return polygon.clone(); } );
-		node.front = this.front && this.front.clone();
-		node.back = this.back && this.back.clone();
-		
-		return node;
-	};
-	ThreeBSP.Node.prototype.invert = function() {
-		var i, polygon_count, temp;
-		
-		for ( i = 0, polygon_count = this.polygons.length; i < polygon_count; i++ ) {
-			this.polygons[i].flip();
-		}
-		
-		this.divider.flip();
-		if ( this.front ) this.front.invert();
-		if ( this.back ) this.back.invert();
-		
-		temp = this.front;
-		this.front = this.back;
-		this.back = temp;
-		
-		return this;
-	};
-	ThreeBSP.Node.prototype.clipPolygons = function( polygons ) {
-		var i, polygon_count,
-			front, back;
+                ( this.normal.dot( polygon.normal ) > 0 ? coplanar_front : coplanar_back ).push( polygon );
 
-		if ( !this.divider ) return polygons.slice();
-		
-		front = [], back = [];
-		
-		for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
-			this.divider.splitPolygon( polygons[i], front, back, front, back );
-		}
+            } else if ( classification === FRONT ) {
 
-		if ( this.front ) front = this.front.clipPolygons( front );
-		if ( this.back ) back = this.back.clipPolygons( back );
-		else back = [];
+                front.push( polygon );
 
-		return front.concat( back );
-	};
-	
-	ThreeBSP.Node.prototype.clipTo = function( node ) {
-		this.polygons = node.clipPolygons( this.polygons );
-		if ( this.front ) this.front.clipTo( node );
-		if ( this.back ) this.back.clipTo( node );
-	};
-	
-	
-	return ThreeBSP;
-})();
+            } else if ( classification === BACK ) {
+
+                back.push( polygon );
+
+            } else {
+
+                var vertice_count,
+                    i, j, ti, tj, vi, vj,
+                    t, v,
+                    f = [],
+                    b = [];
+
+                for ( i = 0, vertice_count = polygon.vertices.length; i < vertice_count; i++ ) {
+
+                    j = (i + 1) % vertice_count;
+                    vi = polygon.vertices[i];
+                    vj = polygon.vertices[j];
+                    ti = this.classifyVertex( vi );
+                    tj = this.classifyVertex( vj );
+
+                    if ( ti != BACK ) f.push( vi );
+                    if ( ti != FRONT ) b.push( vi );
+                    if ( (ti | tj) === SPANNING ) {
+                        t = ( this.w - this.normal.dot( vi ) ) / this.normal.dot( vj.clone().subtract( vi ) );
+                        v = vi.interpolate( vj, t );
+                        f.push( v );
+                        b.push( v );
+                    }
+                }
+
+
+                if ( f.length >= 3 ) front.push( new Polygon( f ).calculateProperties() );
+                if ( b.length >= 3 ) back.push( new Polygon( b ).calculateProperties() );
+            }
+        },
+
+        flagPositive: function() {
+            this.negative = 1;
+            this.vertices.forEach(function(vertex) {
+                vertex.flagPositive();
+            });
+        },
+
+        flagNegative: function() {
+            this.negative = -1;
+            this.vertices.forEach(function(vertex) {
+                vertex.flagNegative();
+            });
+        },
+
+        reportNegative: function() {
+            var report = [
+                this.negative,
+                0
+            ];
+            this.vertices.forEach(function(vertex) {
+                report[1] += vertex.reportNegative();
+            });
+            return report[0] + report[1];
+        }
+    };
+});
+
+var Node = augment(Object, function(uber) {
+
+    var BACK = 2;
+
+    return {
+        constructor: function( polygons ) {
+            var i, polygon_count,
+                front = [],
+                back = [];
+
+            this.polygons = [];
+            this.front = this.back = undefined;
+
+            if ( !(polygons instanceof Array) || polygons.length === 0 ) return;
+
+            this.divider = polygons[0].clone();
+
+            for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
+                this.divider.splitPolygon( polygons[i], this.polygons, this.polygons, front, back );
+            }
+
+            if ( front.length > 0 ) {
+                this.front = new Node( front );
+            }
+
+            if ( back.length > 0 ) {
+                this.back = new Node( back );
+            }
+        },
+
+        isConvex: function(polygons) {
+            var i, j;
+            for ( i = 0; i < polygons.length; i++ ) {
+                for ( j = 0; j < polygons.length; j++ ) {
+                    if ( i !== j && polygons[i].classifySide( polygons[j] ) !== BACK ) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        },
+
+        build: function(polygons) {
+            var i, polygon_count,
+                front = [],
+                back = [];
+
+            if ( !this.divider ) {
+                this.divider = polygons[0].clone();
+            }
+
+            for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
+                this.divider.splitPolygon( polygons[i], this.polygons, this.polygons, front, back );
+            }
+
+            if ( front.length > 0 ) {
+                if ( !this.front ) this.front = new Node();
+                this.front.build( front );
+            }
+
+            if ( back.length > 0 ) {
+                if ( !this.back ) this.back = new Node();
+                this.back.build( back );
+            }
+        },
+
+        allPolygons: function() {
+            var polygons = this.polygons.slice();
+            if ( this.front ) polygons = polygons.concat( this.front.allPolygons() );
+            if ( this.back ) polygons = polygons.concat( this.back.allPolygons() );
+            return polygons;
+        },
+
+        clone: function() {
+            var node = new Node();
+
+            node.divider = this.divider.clone();
+            node.polygons = this.polygons.map( function( polygon ) { return polygon.clone(); } );
+            node.front = this.front && this.front.clone();
+            node.back = this.back && this.back.clone();
+            node.negative = this.negative;
+
+            return node;
+        },
+
+        invert: function() {
+            var i, polygon_count, temp;
+
+            for ( i = 0, polygon_count = this.polygons.length; i < polygon_count; i++ ) {
+                this.polygons[i].flip();
+            }
+
+            this.divider.flip();
+            if ( this.front ) this.front.invert();
+            if ( this.back ) this.back.invert();
+
+            temp = this.front;
+            this.front = this.back;
+            this.back = temp;
+
+            return this;
+        },
+
+        clipPolygons: function(polygons) {
+            var i, polygon_count,
+                front, back;
+
+            if ( !this.divider ) return polygons.slice();
+
+            front = [], back = [];
+
+            for ( i = 0, polygon_count = polygons.length; i < polygon_count; i++ ) {
+                this.divider.splitPolygon( polygons[i], front, back, front, back );
+            }
+
+            if ( this.front ) front = this.front.clipPolygons( front );
+            if ( this.back ) back = this.back.clipPolygons( back );
+            else back = [];
+
+            return front.concat( back );
+        },
+
+        clipTo: function( node ) {
+            this.polygons = node.clipPolygons( this.polygons );
+            if ( this.front ) this.front.clipTo( node );
+            if ( this.back ) this.back.clipTo( node );
+        },
+
+        flagPositive: function() {
+            this.allPolygons().forEach(function(polygon) {
+                polygon.flagPositive();
+            });
+        },
+
+        flagNegative: function() {
+            this.allPolygons().forEach(function(polygon) {
+                polygon.flagNegative();
+            });
+        },
+
+        reportNegative: function() {
+            var report = '';
+            this.allPolygons().forEach(function(polygon) {
+                report += (report ? '.' : '') + polygon.reportNegative();
+            });
+            return report;
+        }
+    };
+});
+
+var CSG = augment(Object, function(uber) {
+    return {
+        constructor: function( geometry ) {
+            // Convert THREE.Geometry to CSG
+            var i, _length_i,
+                face, vertex, faceVertexUvs, uvs,
+                polygon,
+                polygons = [],
+                tree;
+
+            if ( geometry instanceof THREE.Geometry ) {
+                this.matrix = new THREE.Matrix4;
+            } else if ( geometry instanceof THREE.Mesh ) {
+                // #todo: add hierarchy support
+                geometry.updateMatrix();
+                this.matrix = geometry.matrix.clone();
+                geometry = geometry.geometry;
+            } else if ( geometry instanceof Node ) {
+                this.tree = geometry;
+                this.matrix = new THREE.Matrix4;
+                return this;
+            } else {
+                throw 'CSG: Given geometry is unsupported';
+            }
+
+            console.log(geometry);
+
+            for ( i = 0, _length_i = geometry.faces.length; i < _length_i; i++ ) {
+                face = geometry.faces[i];
+                faceVertexUvs = geometry.faceVertexUvs[0][i];
+                polygon = new Polygon;
+                polygon.originalFace = face;
+
+                if ( face instanceof THREE.Face3 ) {
+                    vertex = geometry.vertices[ face.a ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+
+                    vertex = geometry.vertices[ face.b ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+
+                    vertex = geometry.vertices[ face.c ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+                } else if ( typeof THREE.Face4 ) {
+                    vertex = geometry.vertices[ face.a ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+
+                    vertex = geometry.vertices[ face.b ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+
+                    vertex = geometry.vertices[ face.c ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+
+                    vertex = geometry.vertices[ face.d ];
+                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[3].x, faceVertexUvs[3].y ) : null;
+                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[3], uvs );
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push( vertex );
+                } else {
+                    throw 'Invalid face type at index ' + i;
+                }
+
+                polygon.calculateProperties();
+                polygons.push( polygon );
+            };
+
+            this.tree = new Node( polygons );
+        },
+
+        subtract: function( other_tree ) {
+            var a = this.tree.clone(),
+                b = other_tree.tree.clone();
+
+            a.flagPositive();
+            b.flagNegative();
+            console.log(a.reportNegative(), b.reportNegative());
+
+            a.invert();
+            a.clipTo( b );
+
+            console.log(a.reportNegative(), b.reportNegative());
+
+            b.clipTo( a );
+
+            console.log(a.reportNegative(), b.reportNegative());
+
+            b.invert();
+
+            console.log(a.reportNegative(), b.reportNegative());
+
+            b.clipTo( a );
+
+            console.log(a.reportNegative(), b.reportNegative());
+            b.invert();
+
+            console.log(a.reportNegative(), b.reportNegative());
+            a.build( b.allPolygons() );
+
+            console.log(a.reportNegative(), b.reportNegative());
+            a.invert();
+            console.log(a.reportNegative());
+            a = new CSG( a );
+            a.matrix = this.matrix;
+            return a;
+        },
+
+        union: function( other_tree ) {
+            var a = this.tree.clone(),
+                b = other_tree.tree.clone();
+
+            a.clipTo( b );
+            b.clipTo( a );
+            b.invert();
+            b.clipTo( a );
+            b.invert();
+            a.build( b.allPolygons() );
+            a = new CSG( a );
+            a.matrix = this.matrix;
+            return a;
+        },
+
+        intersect: function( other_tree ) {
+            var a = this.tree.clone(),
+                b = other_tree.tree.clone();
+
+            a.invert();
+            b.clipTo( a );
+            b.invert();
+            a.clipTo( b );
+            b.clipTo( a );
+            a.build( b.allPolygons() );
+            a.invert();
+            a = new CSG( a );
+            a.matrix = this.matrix;
+            return a;
+        },
+
+        toGeometry: function() {
+            var i, j, k,
+                matrix = new THREE.Matrix4().getInverse( this.matrix ),
+                geometry = new THREE.Geometry(),
+                polygons = this.tree.allPolygons(),
+                polygon_count = polygons.length,
+                polygon, polygon_vertice_count,
+                vertice_dict = {},
+                vertexIdx,
+                vertex, face,
+                verticeUvs,
+                vertexNormals;
+
+            for ( i = 0; i < polygon_count; i++ ) {
+                polygon = polygons[i];
+                polygon_vertice_count = polygon.vertices.length;
+
+                var neg = polygon.reportNegative() < 0 ? -1 : 1;
+
+                for ( j = 2; j < polygon_vertice_count; j++ ) {
+                    verticeUvs = [];
+                    vertexNormals = [];
+                    vertexIdx = [];
+
+                    for ( k = 0; k < 3; k++ ) {
+                        var index = [0, j-1, j][k];
+                        vertex = polygon.vertices[index];
+                        verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
+                        vertexNormals.push( new THREE.Vector3( vertex.normal.x * neg, vertex.normal.y * neg, vertex.normal.z * neg ) );
+                        vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
+                        vertex.applyMatrix4(matrix);
+                        if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
+                            vertexIdx[k] = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ];
+                        } else {
+                            geometry.vertices.push( vertex );
+                            vertexIdx[k] = vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] = geometry.vertices.length - 1;
+                        }
+                    }
+
+                    face = new THREE.Face3(
+                        vertexIdx[0],
+                        vertexIdx[1],
+                        vertexIdx[2],
+                        new THREE.Vector3( polygon.normal.x, polygon.normal.y, polygon.normal.z )
+                    );
+                    face.vertexNormals = vertexNormals;
+
+                    geometry.faces.push( face );
+                    geometry.faceVertexUvs[0].push( verticeUvs );
+                }
+
+            }
+            console.log(geometry);
+            return geometry;
+        },
+
+        toMesh: function( material ) {
+            var geometry = this.toGeometry(),
+                mesh = new THREE.Mesh( geometry, material );
+
+            mesh.position.setFromMatrixPosition( this.matrix );
+            mesh.rotation.setFromRotationMatrix( this.matrix );
+
+            return mesh;
+        }
+    };
+});
 
 var BLOX = new function() {
+
+    var DEGRESS_TO_RADIANS = Math.PI / 180;
 
     // Internal helper for tiny errors.
     var reportError = function(info) {
@@ -1175,10 +679,11 @@ var BLOX = new function() {
         var geometry;
         if (csg.shape) {
             geometry = ({
-                sphere: function() { return new THREE.SphereGeometry( csg.radius, 32, 32 ); },
-                box: function() { return new THREE.BoxGeometry( csg.x, csg.y, csg.z ); }
+                sphere: function() { return new THREE.SphereGeometry( csg.radius, 16, 12 ); },
+                box: function() { return new THREE.BoxGeometry( csg.x, csg.y, csg.z ); },
+                cylinder: function() { return new THREE.CylinderGeometry( csg.top, csg.bottom, csg.height, 16 ); }
             }[csg.shape]||(function(){
-                reportError('Shape "' + csg.shape + '" not supported, use sphere or box.');
+                reportError('Shape "' + csg.shape + '" not supported, use sphere, box or cylinder.');
             }))();
         }
         if (csg.subtract) {
@@ -1186,22 +691,20 @@ var BLOX = new function() {
             csg.subtract.forEach(function(csg) {
                 var geometry = BLOX.toGeometry(csg);
                 if (geometry) {
-                    bsps.push(new ThreeBSP(geometry));
+                    bsps.push(new CSG(geometry));
                 }
             });
-            var firstBsp = geometry ? new ThreeBSP(geometry) : null,
+            var firstBsp = geometry ? new CSG(geometry) : null,
                 unionBsp;
             if (!firstBsp) {
                 firstBsp = bsps.shift();
             }
             if (bsps.length) {
                 bsps.forEach(function (bsp, index) {
-                    if (index || geometry) {
-                        if (!unionBsp) {
-                            unionBsp = bsp;
-                        } else {
-                            unionBsp.union(bsp);
-                        }
+                    if (!unionBsp) {
+                        unionBsp = bsp;
+                    } else {
+                        unionBsp = unionBsp.union(bsp);
                     }
                 });
                 var subtractBsp = firstBsp.subtract(unionBsp);
@@ -1210,7 +713,41 @@ var BLOX = new function() {
                 geometry = firstBsp ? firstBsp.toGeometry() : geometry;
             }
         } else if (csg.union) {
-
+            var bsps = [];
+            csg.union.forEach(function(csg) {
+                var geometry = BLOX.toGeometry(csg);
+                if (geometry) {
+                    bsps.push(new CSG(geometry));
+                }
+            });
+            var firstBsp = geometry ? new CSG(geometry) : null,
+                unionBsp = firstBsp;
+            bsps.forEach(function (bsp, index) {
+                if (!unionBsp) {
+                    unionBsp = bsp;
+                } else {
+                    unionBsp = unionBsp.union(bsp);
+                }
+            });
+            geometry = unionBsp.toGeometry();
+        } else if (csg.intersect) {
+            var bsps = [];
+            csg.intersect.forEach(function(csg) {
+                var geometry = BLOX.toGeometry(csg);
+                if (geometry) {
+                    bsps.push(new CSG(geometry));
+                }
+            });
+            var firstBsp = geometry ? new CSG(geometry) : null,
+                intersectBsp = firstBsp;
+            bsps.forEach(function (bsp) {
+                if (!intersectBsp) {
+                    intersectBsp = bsp;
+                } else {
+                    intersectBsp = intersectBsp.intersect(bsp);
+                }
+            });
+            geometry = intersectBsp.toGeometry();
         }
         if (geometry && csg.ops) {
             csg.ops.forEach(function(op) {
@@ -1219,9 +756,9 @@ var BLOX = new function() {
                 }
                 if (op.rotate) {
                     var r = op.rotate;
-                    r[0] && geometry.rotateX(r[0]);
-                    r[1] && geometry.rotateY(r[1]);
-                    r[2] && geometry.rotateZ(r[2]);
+                    r[0] && geometry.rotateX(r[0] * DEGRESS_TO_RADIANS);
+                    r[1] && geometry.rotateY(r[1] * DEGRESS_TO_RADIANS);
+                    r[2] && geometry.rotateZ(r[2] * DEGRESS_TO_RADIANS);
                 }
                 if (op.translate) {
                     geometry.translate.apply(geometry, op.translate);

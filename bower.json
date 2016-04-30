@@ -2,9 +2,12 @@
   "name": "blox",
   "version": "0.0.4",
   "dependencies": {
-    "three.js": "threejs#*"
+    "three.js": "threejs#*",
+    "augment": "^4.3.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "lodash": "^4.11.1"
+  },
   "homepage": "https://github.com/douglascross/blox",
   "authors": [
     "Douglas Cross <brother.douglas@gmail.com>"

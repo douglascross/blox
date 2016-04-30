@@ -22,7 +22,9 @@
 
         <!-- build:js scripts/vendor.js -->
         <!-- bower:js -->
+        <script src="bower_components/augment/augment.js"></script>
         <script src="bower_components/three.js/build/three.js"></script>
+        <script src="bower_components/lodash/lodash.js"></script>
         <!-- endbower -->
         <!-- endbuild -->
 
@@ -37,167 +39,18 @@
         </script>
 
         <!-- build:js({app,.tmp}) scripts/blox.js -->
-        <script src="scripts/csg.js"></script>
-        <script src="scripts/ThreeCSG.js"></script>
+        <script src="scripts/csg/Vertex.js"></script>
+        <script src="scripts/csg/Polygon.js"></script>
+        <script src="scripts/csg/Node.js"></script>
+        <script src="scripts/csg/CSG.js"></script>
         <script src="scripts/blox.js"></script>
         <!-- endbuild -->
 
-        <script>
-            var camera, scene, renderer;
-            var shapes = [];
-            init();
-            animate();
+        <!-- build:js({app,.tmp}) scripts/main.js -->
+        <script src="scripts/examples/subtract.js"></script>
+        <script src="scripts/examples/standard.js"></script>
+        <script src="scripts/main.js"></script>
+        <!-- endbuild -->
 
-            function init() {
-
-                // CAMERA
-                camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 100000 );
-                camera.position.z = 700;
-                camera.position.x = 0;
-                camera.position.y = 0;
-                camera.lookAt({
-                    x: 0,
-                    y: 0,
-                    z: 0
-                });
-
-                // SCENE
-                scene = new THREE.Scene();
-
-                // RENDERER
-                renderer = new THREE.WebGLRenderer();
-                renderer.setPixelRatio( window.devicePixelRatio );
-                renderer.setSize( window.innerWidth, window.innerHeight );
-                document.body.appendChild( renderer.domElement );
-                window.addEventListener( 'resize', onWindowResize, false );
-
-                // RENDERER: SHADOW
-                renderer.shadowMap.enabled = true;
-                renderer.shadowMap.soft = true;
-                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-                // LIGHT
-                var spotLight = new THREE.DirectionalLight( 0xffffff, 1);
-                spotLight.position.set( 0, 0, 1200 );
-
-                // LIGHT: SHADOW
-                spotLight.castShadow = true;
-                spotLight.shadow.darkness = 0.2;
-                spotLight.shadow.mapSize.width = 512;
-                spotLight.shadow.mapSize.height = 512;
-                spotLight.shadow.camera.near = 200;
-                spotLight.shadow.camera.far = 2000;
-                var d = 300;
-                spotLight.shadow.camera.left = -d;
-                spotLight.shadow.camera.right = d;
-                spotLight.shadow.camera.top = d;
-                spotLight.shadow.camera.bottom = -d;
-
-                // LIGHT: SHADOW: HELPER
-                var cameraHelper = new THREE.CameraHelper( spotLight.shadow.camera );
-                //scene.add(cameraHelper);
-
-                scene.add( spotLight );
-
-                // LIGHT: AMBIENT
-                var light = new THREE.AmbientLight(0x444444); // soft white light
-                scene.add( light );
-
-                // TEXTURE
-                var texture = new THREE.TextureLoader().load('images/Cliffs0193_2_S.jpg');
-                var material = new THREE.MeshPhongMaterial({
-                    map: texture
-                });
-
-                // PLANE
-                var groundMaterial = new THREE.MeshPhongMaterial({
-                    color: 0xffffff,
-                    emissive: 0x999999
-                });
-                plane = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), groundMaterial);
-                plane.position.z = -120;
-                plane.receiveShadow = true;
-                scene.add(plane);
-
-                // BLOX: CSG
-                var csgs = [];
-                csgs.push({
-                    shape: 'box', x: 200, y: 200, z: 200,
-                    subtract: [
-                        {
-                            shape: 'sphere', radius: 120,
-                            ops: [{scale: [2, 1, 1]}]
-                        }
-                    ],
-                    ops: [
-                        {scale: [0.5, 1, 1]}
-                    ],
-                    position: [-150, 150]
-                });
-                csgs.push({
-                    shape: 'sphere', radius: 120,
-                    subtract: [
-                        {
-                            shape: 'box', x: 200, y: 200, z: 200,
-                            ops: [{scale: [2, 1, 1]}]
-                        }
-                    ],
-                    ops: [
-                        {scale: [0.5, 1, 1]}
-                    ],
-                    position: [150, 150]
-                });
-                csgs.push({
-                    shape: 'box', x: 200, y: 200, z: 200,
-                    subtract: [
-                        {
-                            shape: 'box', x: 120, y: 120, z: 120,
-                            ops: [{scale: [2, 1, 1]}]
-                        }
-                    ],
-                    ops: [
-                        {scale: [0.5, 1, 1]}
-                    ],
-                    position: [-150, -150]
-                });
-                csgs.push({
-                    shape: 'sphere', radius: 120,
-                    subtract: [
-                        {
-                            shape: 'sphere', radius: 110,
-                            ops: [{translate: [50, 0, 0]}]
-                        }
-                    ],
-                    ops: [
-                        {scale: [0.5, 1, 1]}
-                    ],
-                    position: [150, -150]
-                });
-
-                // BLOX: CSG: ADD
-                csgs.forEach(function(csg, index) {
-                    var geo = BLOX.toGeometry(csg),
-                        shape = new THREE.Mesh( geo, material );
-                    shapes.push(shape);
-                    shape.castShadow = true;
-                    shape.position.x = csg.position[0];
-                    shape.position.y = csg.position[1];
-                    scene.add(shape);
-                });
-            }
-            function onWindowResize() {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize( window.innerWidth, window.innerHeight );
-            }
-            function animate() {
-                requestAnimationFrame( animate );
-                shapes.forEach(function(shape) {
-                    shape.rotation.x += 0.005;
-                    shape.rotation.y += 0.01;
-                });
-                renderer.render( scene, camera );
-            }
-        </script>
     </body>
 </html>
