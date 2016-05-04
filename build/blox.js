@@ -16,17 +16,17 @@
 
 var Vertex = augment(Object, function(uber) {
     return {
-        constructor: function (x, y, z, normal, uv, negative) {
+        constructor: function (x, y, z, normal, uv, facing) {
             this.x = x;
             this.y = y;
             this.z = z;
             this.normal = normal || new THREE.Vector3;
             this.uv = uv || new THREE.Vector2;
-            this.negative = negative || 0;
+            this.facing = facing || 0;
         },
 
         clone: function () {
-            return new Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone(), this.negative);
+            return new Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone(), this.facing);
         },
 
         add: function (vertex) {
@@ -101,15 +101,15 @@ var Vertex = augment(Object, function(uber) {
         },
 
         flagPositive: function() {
-            this.negative = 1;
+            this.facing = 1;
         },
 
         flagNegative: function() {
-            this.negative = -1;
+            this.facing = -1;
         },
 
-        reportNegative: function() {
-            return this.negative;
+        getFacing: function() {
+            return this.facing;
         }
     };
 });
@@ -124,7 +124,7 @@ var Polygon = augment(Object, function(uber) {
 
     return {
         constructor: function(vertices) {
-            if ( !( vertices instanceof Array ) ) {
+            if (!( vertices instanceof Array )) {
                 vertices = [];
             }
 
@@ -135,10 +135,11 @@ var Polygon = augment(Object, function(uber) {
                 this.normal = this.w = undefined;
             }
 
-            this.negative = 0;
+            this.facing = 0;
+            this.originalFace = null;
         },
 
-        calculateProperties: function() {
+        calculateProperties: function(polygon) {
             var a = this.vertices[0],
                 b = this.vertices[1],
                 c = this.vertices[2];
@@ -149,6 +150,11 @@ var Polygon = augment(Object, function(uber) {
 
             this.w = this.normal.clone().dot( a );
 
+            if (polygon) {
+                this.facing = polygon.facing;
+                this.originalFace = polygon.originalFace;
+            }
+
             return this;
         },
 
@@ -158,10 +164,11 @@ var Polygon = augment(Object, function(uber) {
 
             for ( i = 0, vertice_count = this.vertices.length; i < vertice_count; i++ ) {
                 polygon.vertices.push( this.vertices[i].clone() );
-            };
+            }
             polygon.calculateProperties();
 
-            polygon.negative = this.negative;
+            polygon.facing = this.facing;
+            polygon.originalFace = this.originalFace;
 
             return polygon;
         },
@@ -261,32 +268,32 @@ var Polygon = augment(Object, function(uber) {
                 }
 
 
-                if ( f.length >= 3 ) front.push( new Polygon( f ).calculateProperties() );
-                if ( b.length >= 3 ) back.push( new Polygon( b ).calculateProperties() );
+                if ( f.length >= 3 ) front.push( new Polygon( f ).calculateProperties(polygon) );
+                if ( b.length >= 3 ) back.push( new Polygon( b ).calculateProperties(polygon) );
             }
         },
 
         flagPositive: function() {
-            this.negative = 1;
+            this.facing = 1;
             this.vertices.forEach(function(vertex) {
                 vertex.flagPositive();
             });
         },
 
         flagNegative: function() {
-            this.negative = -1;
+            this.facing = -1;
             this.vertices.forEach(function(vertex) {
                 vertex.flagNegative();
             });
         },
 
-        reportNegative: function() {
+        getFacing: function() {
             var report = [
-                this.negative,
+                this.facing,
                 0
             ];
             this.vertices.forEach(function(vertex) {
-                report[1] += vertex.reportNegative();
+                report[1] += vertex.getFacing();
             });
             return report[0] + report[1];
         }
@@ -373,7 +380,6 @@ var Node = augment(Object, function(uber) {
             node.polygons = this.polygons.map( function( polygon ) { return polygon.clone(); } );
             node.front = this.front && this.front.clone();
             node.back = this.back && this.back.clone();
-            node.negative = this.negative;
 
             return node;
         },
@@ -433,10 +439,10 @@ var Node = augment(Object, function(uber) {
             });
         },
 
-        reportNegative: function() {
+        getFacing: function() {
             var report = '';
             this.allPolygons().forEach(function(polygon) {
-                report += (report ? '.' : '') + polygon.reportNegative();
+                report += (report ? '.' : '') + polygon.getFacing();
             });
             return report;
         }
@@ -448,18 +454,20 @@ var CSG = augment(Object, function(uber) {
         constructor: function( geometry ) {
             // Convert THREE.Geometry to CSG
             var i, _length_i,
+                j, _length_j, vertexRef,
                 face, vertex, faceVertexUvs, uvs,
+                mesh, material,
                 polygon,
-                polygons = [],
-                tree;
+                polygons = [];
 
             if ( geometry instanceof THREE.Geometry ) {
                 this.matrix = new THREE.Matrix4;
             } else if ( geometry instanceof THREE.Mesh ) {
-                // #todo: add hierarchy support
-                geometry.updateMatrix();
-                this.matrix = geometry.matrix.clone();
-                geometry = geometry.geometry;
+                mesh = geometry;
+                mesh.updateMatrix();
+                this.matrix = mesh.matrix.clone();
+                material = mesh.material;
+                geometry = mesh.geometry;
             } else if ( geometry instanceof Node ) {
                 this.tree = geometry;
                 this.matrix = new THREE.Matrix4;
@@ -468,107 +476,57 @@ var CSG = augment(Object, function(uber) {
                 throw 'CSG: Given geometry is unsupported';
             }
 
-            console.log(geometry);
-
             for ( i = 0, _length_i = geometry.faces.length; i < _length_i; i++ ) {
                 face = geometry.faces[i];
                 faceVertexUvs = geometry.faceVertexUvs[0][i];
                 polygon = new Polygon;
                 polygon.originalFace = face;
 
-                if ( face instanceof THREE.Face3 ) {
-                    vertex = geometry.vertices[ face.a ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.b ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.c ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-                } else if ( typeof THREE.Face4 ) {
-                    vertex = geometry.vertices[ face.a ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.b ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.c ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.d ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[3].x, faceVertexUvs[3].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[3], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
+                if (material instanceof THREE.MultiMaterial) {
+                    face._material = (material.materials || [])[face.materialIndex];
                 } else {
-                    throw 'Invalid face type at index ' + i;
+                    face._material = material;
+                }
+
+                for ( j = 0, _length_j = faceVertexUvs.length; j < 3; j += 1 ) {
+                    vertexRef = face[['a', 'b', 'c', 'd'][j]];
+                    vertex = geometry.vertices[vertexRef];
+                    uvs = faceVertexUvs ? new THREE.Vector2(faceVertexUvs[j].x, faceVertexUvs[j].y) : null;
+                    vertex = new Vertex(vertex.x, vertex.y, vertex.z, face.vertexNormals[j], uvs);
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push(vertex);
                 }
 
                 polygon.calculateProperties();
                 polygons.push( polygon );
-            };
+            }
 
             this.tree = new Node( polygons );
         },
 
-        subtract: function( other_tree ) {
+        subtract: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.flagPositive();
             b.flagNegative();
-            console.log(a.reportNegative(), b.reportNegative());
 
             a.invert();
             a.clipTo( b );
-
-            console.log(a.reportNegative(), b.reportNegative());
-
             b.clipTo( a );
-
-            console.log(a.reportNegative(), b.reportNegative());
-
             b.invert();
-
-            console.log(a.reportNegative(), b.reportNegative());
-
             b.clipTo( a );
-
-            console.log(a.reportNegative(), b.reportNegative());
             b.invert();
-
-            console.log(a.reportNegative(), b.reportNegative());
             a.build( b.allPolygons() );
-
-            console.log(a.reportNegative(), b.reportNegative());
             a.invert();
-            console.log(a.reportNegative());
             a = new CSG( a );
             a.matrix = this.matrix;
             return a;
         },
 
-        union: function( other_tree ) {
+        union: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.clipTo( b );
             b.clipTo( a );
@@ -581,9 +539,9 @@ var CSG = augment(Object, function(uber) {
             return a;
         },
 
-        intersect: function( other_tree ) {
+        intersect: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.invert();
             b.clipTo( a );
@@ -604,6 +562,7 @@ var CSG = augment(Object, function(uber) {
                 polygons = this.tree.allPolygons(),
                 polygon_count = polygons.length,
                 polygon, polygon_vertice_count,
+                facing, normal, relVertIdx,
                 vertice_dict = {},
                 vertexIdx,
                 vertex, face,
@@ -614,7 +573,7 @@ var CSG = augment(Object, function(uber) {
                 polygon = polygons[i];
                 polygon_vertice_count = polygon.vertices.length;
 
-                var neg = polygon.reportNegative() < 0 ? -1 : 1;
+                facing = polygon.getFacing() < 0 ? -1 : 1;
 
                 for ( j = 2; j < polygon_vertice_count; j++ ) {
                     verticeUvs = [];
@@ -622,10 +581,11 @@ var CSG = augment(Object, function(uber) {
                     vertexIdx = [];
 
                     for ( k = 0; k < 3; k++ ) {
-                        var index = [0, j-1, j][k];
-                        vertex = polygon.vertices[index];
+                        relVertIdx = [0, j-1, j][k];
+                        vertex = polygon.vertices[relVertIdx];
                         verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
-                        vertexNormals.push( new THREE.Vector3( vertex.normal.x * neg, vertex.normal.y * neg, vertex.normal.z * neg ) );
+                        normal = vertex.normal;
+                        vertexNormals.push( new THREE.Vector3( normal.x * facing, normal.y * facing, normal.z * facing ) );
                         vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
                         vertex.applyMatrix4(matrix);
                         if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
@@ -643,22 +603,36 @@ var CSG = augment(Object, function(uber) {
                         new THREE.Vector3( polygon.normal.x, polygon.normal.y, polygon.normal.z )
                     );
                     face.vertexNormals = vertexNormals;
+                    face._material = polygon.originalFace ? polygon.originalFace._material : face._material;
 
                     geometry.faces.push( face );
                     geometry.faceVertexUvs[0].push( verticeUvs );
                 }
 
             }
-            console.log(geometry);
             return geometry;
         },
 
-        toMesh: function( material ) {
+        toMesh: function() {
             var geometry = this.toGeometry(),
+                material = new THREE.MultiMaterial,
                 mesh = new THREE.Mesh( geometry, material );
 
             mesh.position.setFromMatrixPosition( this.matrix );
             mesh.rotation.setFromRotationMatrix( this.matrix );
+
+            var materials = [];
+            mesh.geometry.faces.forEach(function(face) {
+                var material = face._material,
+                    materialIndex = materials.indexOf(material);
+                if (materialIndex < 0) {
+                    materialIndex = materials.length
+                    materials.push(material);
+                }
+                face.materialIndex = materialIndex;
+                delete face._material;
+            });
+            mesh.material.materials = materials;
 
             return mesh;
         }
@@ -668,6 +642,7 @@ var CSG = augment(Object, function(uber) {
 var BLOX = new function() {
 
     var DEGRESS_TO_RADIANS = Math.PI / 180;
+    var DEFAULT_COLOR = 0xff8800;
 
     // Internal helper for tiny errors.
     var reportError = function(info) {
@@ -675,10 +650,10 @@ var BLOX = new function() {
     };
 
     // Convert a BLOX CSG definition into a THREE Geometry.
-    this.toGeometry = function(csg) {
-        var geometry;
+    this.toMesh = function(csg) {
+        var mesh;
         if (csg.shape) {
-            geometry = ({
+            var geometry = ({
                 sphere: function() { return new THREE.SphereGeometry( csg.radius, 16, 12 ); },
                 box: function() { return new THREE.BoxGeometry( csg.x, csg.y, csg.z ); },
                 cylinder: function() { return new THREE.CylinderGeometry( csg.top, csg.bottom, csg.height, 16 ); }
@@ -686,86 +661,97 @@ var BLOX = new function() {
                 reportError('Shape "' + csg.shape + '" not supported, use sphere, box or cylinder.');
             }))();
         }
+        if (geometry) {
+            var material = new THREE.MeshPhongMaterial({
+                color: csg.color || DEFAULT_COLOR,
+                vertexColors: THREE.VertexColors
+            });
+            mesh = new THREE.Mesh(geometry, material);
+        }
         if (csg.subtract) {
-            var bsps = [];
+            var csgs = [];
             csg.subtract.forEach(function(csg) {
-                var geometry = BLOX.toGeometry(csg);
-                if (geometry) {
-                    bsps.push(new CSG(geometry));
+                var mesh = BLOX.toMesh(csg);
+                if (mesh) {
+                    csgs.push(new CSG(mesh));
                 }
             });
-            var firstBsp = geometry ? new CSG(geometry) : null,
-                unionBsp;
-            if (!firstBsp) {
-                firstBsp = bsps.shift();
+            var firstCsg = mesh ? new CSG(mesh) : null,
+                unionCsg;
+            if (!firstCsg) {
+                firstCsg = csgs.shift();
             }
-            if (bsps.length) {
-                bsps.forEach(function (bsp, index) {
-                    if (!unionBsp) {
-                        unionBsp = bsp;
+            if (csgs.length) {
+                csgs.forEach(function (csg, index) {
+                    if (!unionCsg) {
+                        unionCsg = csg;
                     } else {
-                        unionBsp = unionBsp.union(bsp);
+                        unionCsg = unionCsg.union(csg);
                     }
                 });
-                var subtractBsp = firstBsp.subtract(unionBsp);
-                geometry = subtractBsp.toGeometry();
+                var subtractCsg = firstCsg.subtract(unionCsg);
+                mesh = subtractCsg.toMesh();
             } else {
-                geometry = firstBsp ? firstBsp.toGeometry() : geometry;
+                mesh = firstCsg ? firstCsg.toMesh() : mesh;
             }
         } else if (csg.union) {
-            var bsps = [];
+            var csgs = [];
             csg.union.forEach(function(csg) {
-                var geometry = BLOX.toGeometry(csg);
-                if (geometry) {
-                    bsps.push(new CSG(geometry));
+                var mesh = BLOX.toMesh(csg);
+                if (mesh) {
+                    csgs.push(new CSG(mesh));
                 }
             });
-            var firstBsp = geometry ? new CSG(geometry) : null,
-                unionBsp = firstBsp;
-            bsps.forEach(function (bsp, index) {
-                if (!unionBsp) {
-                    unionBsp = bsp;
+            var firstCsg = mesh ? new CSG(mesh) : null,
+                unionCsg = firstCsg;
+            csgs.forEach(function (csg, index) {
+                if (!unionCsg) {
+                    unionCsg = csg;
                 } else {
-                    unionBsp = unionBsp.union(bsp);
+                    unionCsg = unionCsg.union(csg);
                 }
             });
-            geometry = unionBsp.toGeometry();
+            mesh = unionCsg.toMesh();
         } else if (csg.intersect) {
-            var bsps = [];
+            var csgs = [];
             csg.intersect.forEach(function(csg) {
-                var geometry = BLOX.toGeometry(csg);
-                if (geometry) {
-                    bsps.push(new CSG(geometry));
+                var mesh = BLOX.toMesh(csg);
+                if (mesh) {
+                    csgs.push(new CSG(mesh));
                 }
             });
-            var firstBsp = geometry ? new CSG(geometry) : null,
-                intersectBsp = firstBsp;
-            bsps.forEach(function (bsp) {
-                if (!intersectBsp) {
-                    intersectBsp = bsp;
+            var firstCsg = mesh ? new CSG(mesh) : null,
+                intersectCsg = firstCsg;
+            csgs.forEach(function (csg) {
+                if (!intersectCsg) {
+                    intersectCsg = csg;
                 } else {
-                    intersectBsp = intersectBsp.intersect(bsp);
+                    intersectCsg = intersectCsg.intersect(csg);
                 }
             });
-            geometry = intersectBsp.toGeometry();
+            mesh = intersectCsg.toMesh();
         }
-        if (geometry && csg.ops) {
+        if (mesh && csg.ops) {
             csg.ops.forEach(function(op) {
                 if (op.scale) {
-                    geometry.scale.apply(geometry, op.scale);
+                    mesh.geometry.scale.apply(mesh.geometry, op.scale);
                 }
                 if (op.rotate) {
                     var r = op.rotate;
-                    r[0] && geometry.rotateX(r[0] * DEGRESS_TO_RADIANS);
-                    r[1] && geometry.rotateY(r[1] * DEGRESS_TO_RADIANS);
-                    r[2] && geometry.rotateZ(r[2] * DEGRESS_TO_RADIANS);
+                    r[0] && mesh.geometry.rotateX(r[0] * DEGRESS_TO_RADIANS);
+                    r[1] && mesh.geometry.rotateY(r[1] * DEGRESS_TO_RADIANS);
+                    r[2] && mesh.geometry.rotateZ(r[2] * DEGRESS_TO_RADIANS);
                 }
                 if (op.translate) {
-                    geometry.translate.apply(geometry, op.translate);
+                    mesh.geometry.translate.apply(mesh.geometry, op.translate);
                 }
             });
         }
-        return geometry;
+        return mesh;
+    };
+
+    this.toGeometry = function(csg) {
+        return this.toMesh(csg).geometry;
     }
 }
 
