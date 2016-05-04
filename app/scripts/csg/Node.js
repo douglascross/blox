@@ -78,7 +78,6 @@ var Node = augment(Object, function(uber) {
             node.polygons = this.polygons.map( function( polygon ) { return polygon.clone(); } );
             node.front = this.front && this.front.clone();
             node.back = this.back && this.back.clone();
-            node.negative = this.negative;
 
             return node;
         },
@@ -138,10 +137,10 @@ var Node = augment(Object, function(uber) {
             });
         },
 
-        reportNegative: function() {
+        getFacing: function() {
             var report = '';
             this.allPolygons().forEach(function(polygon) {
-                report += (report ? '.' : '') + polygon.reportNegative();
+                report += (report ? '.' : '') + polygon.getFacing();
             });
             return report;
         }

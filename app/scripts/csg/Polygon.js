@@ -8,7 +8,7 @@ var Polygon = augment(Object, function(uber) {
 
     return {
         constructor: function(vertices) {
-            if ( !( vertices instanceof Array ) ) {
+            if (!( vertices instanceof Array )) {
                 vertices = [];
             }
 
@@ -19,10 +19,11 @@ var Polygon = augment(Object, function(uber) {
                 this.normal = this.w = undefined;
             }
 
-            this.negative = 0;
+            this.facing = 0;
+            this.originalFace = null;
         },
 
-        calculateProperties: function() {
+        calculateProperties: function(polygon) {
             var a = this.vertices[0],
                 b = this.vertices[1],
                 c = this.vertices[2];
@@ -33,6 +34,11 @@ var Polygon = augment(Object, function(uber) {
 
             this.w = this.normal.clone().dot( a );
 
+            if (polygon) {
+                this.facing = polygon.facing;
+                this.originalFace = polygon.originalFace;
+            }
+
             return this;
         },
 
@@ -42,10 +48,11 @@ var Polygon = augment(Object, function(uber) {
 
             for ( i = 0, vertice_count = this.vertices.length; i < vertice_count; i++ ) {
                 polygon.vertices.push( this.vertices[i].clone() );
-            };
+            }
             polygon.calculateProperties();
 
-            polygon.negative = this.negative;
+            polygon.facing = this.facing;
+            polygon.originalFace = this.originalFace;
 
             return polygon;
         },
@@ -145,32 +152,32 @@ var Polygon = augment(Object, function(uber) {
                 }
 
 
-                if ( f.length >= 3 ) front.push( new Polygon( f ).calculateProperties() );
-                if ( b.length >= 3 ) back.push( new Polygon( b ).calculateProperties() );
+                if ( f.length >= 3 ) front.push( new Polygon( f ).calculateProperties(polygon) );
+                if ( b.length >= 3 ) back.push( new Polygon( b ).calculateProperties(polygon) );
             }
         },
 
         flagPositive: function() {
-            this.negative = 1;
+            this.facing = 1;
             this.vertices.forEach(function(vertex) {
                 vertex.flagPositive();
             });
         },
 
         flagNegative: function() {
-            this.negative = -1;
+            this.facing = -1;
             this.vertices.forEach(function(vertex) {
                 vertex.flagNegative();
             });
         },
 
-        reportNegative: function() {
+        getFacing: function() {
             var report = [
-                this.negative,
+                this.facing,
                 0
             ];
             this.vertices.forEach(function(vertex) {
-                report[1] += vertex.reportNegative();
+                report[1] += vertex.getFacing();
             });
             return report[0] + report[1];
         }

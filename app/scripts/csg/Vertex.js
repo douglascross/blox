@@ -1,16 +1,16 @@
 var Vertex = augment(Object, function(uber) {
     return {
-        constructor: function (x, y, z, normal, uv, negative) {
+        constructor: function (x, y, z, normal, uv, facing) {
             this.x = x;
             this.y = y;
             this.z = z;
             this.normal = normal || new THREE.Vector3;
             this.uv = uv || new THREE.Vector2;
-            this.negative = negative || 0;
+            this.facing = facing || 0;
         },
 
         clone: function () {
-            return new Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone(), this.negative);
+            return new Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone(), this.facing);
         },
 
         add: function (vertex) {
@@ -85,15 +85,15 @@ var Vertex = augment(Object, function(uber) {
         },
 
         flagPositive: function() {
-            this.negative = 1;
+            this.facing = 1;
         },
 
         flagNegative: function() {
-            this.negative = -1;
+            this.facing = -1;
         },
 
-        reportNegative: function() {
-            return this.negative;
+        getFacing: function() {
+            return this.facing;
         }
     };
 });

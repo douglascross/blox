@@ -71,7 +71,7 @@ function init() {
         color: 0xffffff,
         emissive: 0x999999
     });
-    plane = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), groundMaterial);
+    var plane = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), groundMaterial);
     plane.position.z = -120;
     plane.receiveShadow = true;
     scene.add(plane);
@@ -82,10 +82,14 @@ function init() {
         subtract2,
         subtract3,
         subtract4,
-        spherePart,
         boxPart,
+        sphereWithBox,
         cylindersPart,
-        finalStandard
+        finalStandard,
+        colorExample.boxPart,
+        colorExample.sphereWithBox,
+        colorExample.cylindersPart,
+        colorExample.finalStandard
     ];
 
     // BLOX: CSG: ADD
@@ -98,8 +102,10 @@ function init() {
         csg = _.cloneDeep(csg);
         var cellY = Math.floor(index / cellDepth),
             cellX = index % cellDepth;
-        var geo = BLOX.toGeometry(csg),
-            shape = new THREE.Mesh( geo, material );
+        var shape = BLOX.toMesh(csg);
+        if (!shape) {
+            shape = new THREE.Mesh( BLOX.toGeometry(csg), material );
+        }
         shapes.push(shape);
         shape.castShadow = true;
         shape.scale.x  = scale;

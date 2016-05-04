@@ -3,18 +3,20 @@ var CSG = augment(Object, function(uber) {
         constructor: function( geometry ) {
             // Convert THREE.Geometry to CSG
             var i, _length_i,
+                j, _length_j, vertexRef,
                 face, vertex, faceVertexUvs, uvs,
+                mesh, material,
                 polygon,
-                polygons = [],
-                tree;
+                polygons = [];
 
             if ( geometry instanceof THREE.Geometry ) {
                 this.matrix = new THREE.Matrix4;
             } else if ( geometry instanceof THREE.Mesh ) {
-                // #todo: add hierarchy support
-                geometry.updateMatrix();
-                this.matrix = geometry.matrix.clone();
-                geometry = geometry.geometry;
+                mesh = geometry;
+                mesh.updateMatrix();
+                this.matrix = mesh.matrix.clone();
+                material = mesh.material;
+                geometry = mesh.geometry;
             } else if ( geometry instanceof Node ) {
                 this.tree = geometry;
                 this.matrix = new THREE.Matrix4;
@@ -29,62 +31,31 @@ var CSG = augment(Object, function(uber) {
                 polygon = new Polygon;
                 polygon.originalFace = face;
 
-                if ( face instanceof THREE.Face3 ) {
-                    vertex = geometry.vertices[ face.a ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.b ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.c ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-                } else if ( typeof THREE.Face4 ) {
-                    vertex = geometry.vertices[ face.a ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[0].x, faceVertexUvs[0].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[0], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.b ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[1].x, faceVertexUvs[1].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[1], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.c ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[2].x, faceVertexUvs[2].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[2], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
-
-                    vertex = geometry.vertices[ face.d ];
-                    uvs = faceVertexUvs ? new THREE.Vector2( faceVertexUvs[3].x, faceVertexUvs[3].y ) : null;
-                    vertex = new Vertex( vertex.x, vertex.y, vertex.z, face.vertexNormals[3], uvs );
-                    vertex.applyMatrix4(this.matrix);
-                    polygon.vertices.push( vertex );
+                if (material instanceof THREE.MultiMaterial) {
+                    face._material = (material.materials || [])[face.materialIndex];
                 } else {
-                    throw 'Invalid face type at index ' + i;
+                    face._material = material;
+                }
+
+                for ( j = 0, _length_j = faceVertexUvs.length; j < 3; j += 1 ) {
+                    vertexRef = face[['a', 'b', 'c', 'd'][j]];
+                    vertex = geometry.vertices[vertexRef];
+                    uvs = faceVertexUvs ? new THREE.Vector2(faceVertexUvs[j].x, faceVertexUvs[j].y) : null;
+                    vertex = new Vertex(vertex.x, vertex.y, vertex.z, face.vertexNormals[j], uvs);
+                    vertex.applyMatrix4(this.matrix);
+                    polygon.vertices.push(vertex);
                 }
 
                 polygon.calculateProperties();
                 polygons.push( polygon );
-            };
+            }
 
             this.tree = new Node( polygons );
         },
 
-        subtract: function( other_tree ) {
+        subtract: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.flagPositive();
             b.flagNegative();
@@ -102,9 +73,9 @@ var CSG = augment(Object, function(uber) {
             return a;
         },
 
-        union: function( other_tree ) {
+        union: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.clipTo( b );
             b.clipTo( a );
@@ -117,9 +88,9 @@ var CSG = augment(Object, function(uber) {
             return a;
         },
 
-        intersect: function( other_tree ) {
+        intersect: function( other ) {
             var a = this.tree.clone(),
-                b = other_tree.tree.clone();
+                b = other.tree.clone();
 
             a.invert();
             b.clipTo( a );
@@ -140,6 +111,7 @@ var CSG = augment(Object, function(uber) {
                 polygons = this.tree.allPolygons(),
                 polygon_count = polygons.length,
                 polygon, polygon_vertice_count,
+                facing, normal, relVertIdx,
                 vertice_dict = {},
                 vertexIdx,
                 vertex, face,
@@ -150,7 +122,7 @@ var CSG = augment(Object, function(uber) {
                 polygon = polygons[i];
                 polygon_vertice_count = polygon.vertices.length;
 
-                var neg = polygon.reportNegative() < 0 ? -1 : 1;
+                facing = polygon.getFacing() < 0 ? -1 : 1;
 
                 for ( j = 2; j < polygon_vertice_count; j++ ) {
                     verticeUvs = [];
@@ -158,10 +130,11 @@ var CSG = augment(Object, function(uber) {
                     vertexIdx = [];
 
                     for ( k = 0; k < 3; k++ ) {
-                        var index = [0, j-1, j][k];
-                        vertex = polygon.vertices[index];
+                        relVertIdx = [0, j-1, j][k];
+                        vertex = polygon.vertices[relVertIdx];
                         verticeUvs.push( new THREE.Vector2( vertex.uv.x, vertex.uv.y ) );
-                        vertexNormals.push( new THREE.Vector3( vertex.normal.x * neg, vertex.normal.y * neg, vertex.normal.z * neg ) );
+                        normal = vertex.normal;
+                        vertexNormals.push( new THREE.Vector3( normal.x * facing, normal.y * facing, normal.z * facing ) );
                         vertex = new THREE.Vector3( vertex.x, vertex.y, vertex.z );
                         vertex.applyMatrix4(matrix);
                         if ( typeof vertice_dict[ vertex.x + ',' + vertex.y + ',' + vertex.z ] !== 'undefined' ) {
@@ -179,6 +152,7 @@ var CSG = augment(Object, function(uber) {
                         new THREE.Vector3( polygon.normal.x, polygon.normal.y, polygon.normal.z )
                     );
                     face.vertexNormals = vertexNormals;
+                    face._material = polygon.originalFace ? polygon.originalFace._material : face._material;
 
                     geometry.faces.push( face );
                     geometry.faceVertexUvs[0].push( verticeUvs );
@@ -188,12 +162,26 @@ var CSG = augment(Object, function(uber) {
             return geometry;
         },
 
-        toMesh: function( material ) {
+        toMesh: function() {
             var geometry = this.toGeometry(),
+                material = new THREE.MultiMaterial,
                 mesh = new THREE.Mesh( geometry, material );
 
             mesh.position.setFromMatrixPosition( this.matrix );
             mesh.rotation.setFromRotationMatrix( this.matrix );
+
+            var materials = [];
+            mesh.geometry.faces.forEach(function(face) {
+                var material = face._material,
+                    materialIndex = materials.indexOf(material);
+                if (materialIndex < 0) {
+                    materialIndex = materials.length
+                    materials.push(material);
+                }
+                face.materialIndex = materialIndex;
+                delete face._material;
+            });
+            mesh.material.materials = materials;
 
             return mesh;
         }
