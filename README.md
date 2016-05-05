@@ -19,4 +19,4 @@ var geometry = BLOX.toGeometry(csg);
 
 [See it in action here.](http://douglascross.github.io/blox/)
 
-![alt tag](http://douglascross.github.io/blox/images/preview.png)
+![alt tag](http://douglascross.github.io/blox/images/preview.png?2)
