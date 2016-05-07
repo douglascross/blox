@@ -79,21 +79,26 @@ function init() {
     // BLOX: CSG
     var csgs = [
         subtract1,
-        subtract2,
-        subtract3,
+        //subtract2,
+        //subtract3,
         subtract4,
-        boxPart,
-        sphereWithBox,
-        cylindersPart,
+        //boxPart,
+        //sphereWithBox,
+        //cylindersPart,
         finalStandard,
-        colorExample.boxPart,
+        //colorExample.boxPart,
         colorExample.sphereWithBox,
         colorExample.cylindersPart,
-        colorExample.finalStandard
+        colorExample.finalStandard,
+        //axe.edge,
+        //axe.complete,
+        { object: axe.stone, stopX: true},
+        //sword.blade,
+        { object: sword.stone, stopX: true}
     ];
 
     // BLOX: CSG: ADD
-    var cntItems = 16,//csgs.length,
+    var cntItems = csgs.length,
         cellDepth = Math.ceil(Math.pow(cntItems, 0.5)),
         cellSize = 1000 / cellDepth,
         cellSizeOffset = cellSize * (cellDepth / 2 - 0.5),
@@ -106,6 +111,7 @@ function init() {
         if (!shape) {
             shape = new THREE.Mesh( BLOX.toGeometry(csg), material );
         }
+        shape.stopX = csg.stopX;
         shapes.push(shape);
         shape.castShadow = true;
         shape.scale.x  = scale;
@@ -124,7 +130,9 @@ function onWindowResize() {
 function animate() {
     requestAnimationFrame( animate );
     shapes.forEach(function(shape) {
-        shape.rotation.x += 0.005;
+        if (!shape.stopX) {
+            shape.rotation.x += 0.005;
+        }
         shape.rotation.y += 0.01;
     });
     renderer.render( scene, camera );
