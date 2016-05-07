@@ -643,6 +643,9 @@ var BLOX = new function() {
 
     var DEGRESS_TO_RADIANS = Math.PI / 180;
     var DEFAULT_COLOR = 0xff8800;
+    var DEFAULT_DETAIL = 3;
+
+    var textureCache = {};
 
     // Internal helper for tiny errors.
     var reportError = function(info) {
@@ -651,22 +654,30 @@ var BLOX = new function() {
 
     // Convert a BLOX CSG definition into a THREE Geometry.
     this.toMesh = function(csg) {
-        var mesh;
+        csg = JSON.parse(JSON.stringify(csg));
+        var mesh, geometry, material;
+        csg = BLOX.correctForNegativeScale(csg);
         if (csg.shape) {
-            var geometry = ({
-                sphere: function() { return new THREE.SphereGeometry( csg.radius, 16, 12 ); },
-                box: function() { return new THREE.BoxGeometry( csg.x, csg.y, csg.z ); },
-                cylinder: function() { return new THREE.CylinderGeometry( csg.top, csg.bottom, csg.height, 16 ); }
+            geometry = ({
+                sphere: function() { return new THREE.SphereGeometry( csg.radius || 50, 8 * DEFAULT_DETAIL, 6 * DEFAULT_DETAIL ); },
+                box: function() { return new THREE.BoxGeometry( csg.x || 100, csg.y || 100, csg.z || 100 ); },
+                cylinder: function() {
+                    return new THREE.CylinderGeometry(
+                        csg.top >= 0 ? csg.top : 100,
+                        csg.bottom >= 0 ? csg.bottom : 100,
+                        csg.height || 100,
+                        8 * DEFAULT_DETAIL
+                    );
+                }
             }[csg.shape]||(function(){
                 reportError('Shape "' + csg.shape + '" not supported, use sphere, box or cylinder.');
             }))();
-        }
-        if (geometry) {
-            var material = new THREE.MeshPhongMaterial({
-                color: csg.color || DEFAULT_COLOR,
-                vertexColors: THREE.VertexColors
-            });
-            mesh = new THREE.Mesh(geometry, material);
+            if (geometry) {
+                material = new THREE.MeshPhongMaterial({color: DEFAULT_COLOR});
+                mesh = new THREE.Mesh(geometry, material);
+            }
+        } else if (csg.object) {
+            mesh = BLOX.toMesh(csg.object);
         }
         if (csg.subtract) {
             var csgs = [];
@@ -731,7 +742,10 @@ var BLOX = new function() {
             });
             mesh = intersectCsg.toMesh();
         }
-        if (mesh && csg.ops) {
+        if (!mesh) {
+            mesh = BLOX.toMesh({shape: 'box'});
+        }
+        if (csg.ops) {
             csg.ops.forEach(function(op) {
                 if (op.scale) {
                     mesh.geometry.scale.apply(mesh.geometry, op.scale);
@@ -747,13 +761,80 @@ var BLOX = new function() {
                 }
             });
         }
+        if (csg.color || csg.texture || csg.mesh) {
+            var materialCfg = {};
+            materialCfg.color = csg.color || DEFAULT_COLOR;
+            if (csg.texture) {
+                var texture = textureCache[csg.texture] = textureCache[csg.texture] ||
+                        new THREE.TextureLoader().load(csg.texture);
+                materialCfg.bumpMap = texture;
+                materialCfg.bumpScale = csg.roughness || 1;
+            }
+            materialCfg.shininess = csg.shininess >= 0 ? csg.shininess : 30;
+            if (csg.mesh) {
+                materialCfg.wireframe = csg.mesh;
+            }
+            material = new THREE.MeshPhongMaterial(materialCfg);
+            mesh = new THREE.Mesh(mesh.geometry, material);
+        }
         return mesh;
     };
 
     this.toGeometry = function(csg) {
-        return this.toMesh(csg).geometry;
+        var mesh = this.toMesh(csg);
+        return mesh ? mesh.geometry : null;
     }
 }
+
+
+BLOX.correctForNegativeScale = function(csg, inv) {
+    inv = inv || [1, 1, 1];
+    var isInv = inv[0] + inv[1] + inv[2] < 3;
+    [].concat(csg.ops || []).reverse().forEach(function (op) {
+        var scale = op.scale,
+            translate = op.translate,
+            rotate = op.rotate;
+        if (scale) {
+            scale[0] = scale[0] || 1;
+            scale[1] = scale[1] || 1;
+            scale[2] = scale[2] || 1;
+            var scaleInv = [
+                (scale[0] < 0 ? -1 : 1),
+                (scale[1] < 0 ? -1 : 1),
+                (scale[2] < 0 ? -1 : 1)
+            ];
+            inv[0] *= scaleInv[0];
+            inv[1] *= scaleInv[1];
+            inv[2] *= scaleInv[2];
+            isInv = inv[0] + inv[1] + inv[2] < 3;
+            scale[0] *= scaleInv[0];
+            scale[1] *= scaleInv[1];
+            scale[2] *= scaleInv[2];
+        }
+        if (translate) {
+            translate[0] = translate[0] || 0;
+            translate[1] = translate[1] || 0;
+            translate[2] = translate[2] || 0;
+            translate[0] *= inv[0];
+            translate[1] *= inv[1];
+            translate[2] *= inv[2];
+        }
+        if (isInv && rotate) {
+            rotate[0] = rotate[0] || 0;
+            rotate[1] = rotate[1] || 0;
+            rotate[2] = rotate[2] || 0;
+            rotate[0] *= inv[2] * inv[1];
+            rotate[1] *= inv[0] * inv[2];
+            rotate[2] *= inv[1] * inv[0];
+        }
+    });
+    if (isInv) {
+        (csg.object ? [csg.object] : []).concat(csg.subtract || csg.union || csg.intersect || []).forEach(function (item) {
+            BLOX.correctForNegativeScale(item, inv);
+        });
+    }
+    return csg;
+};
 
 return BLOX;
 
