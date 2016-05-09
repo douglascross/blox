@@ -72,28 +72,33 @@ function init() {
         emissive: 0x999999
     });
     var plane = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), groundMaterial);
-    plane.position.z = -120;
+    plane.position.z = -240;
     plane.receiveShadow = true;
     scene.add(plane);
 
     // BLOX: CSG
     var csgs = [
-        subtract1,
+        //subtract1,
         //subtract2,
         //subtract3,
-        subtract4,
+        //subtract4,
         //boxPart,
-        //sphereWithBox,
+        sphereWithBox,
         //cylindersPart,
         { object: classicExample, color: 0xff8800 },
         classicExample.subtract[0],
-        classicExample.subtract[1],
+        //classicExample.subtract[1],
         classicExample,
         //axe.edge,
         //axe.complete,
-        { object: axe.stone, stopX: true},
+        { object: axe.stone, stopX: true, ops: [{translate: [0, 40]}, {scale:[0.7, 0.7, 0.7]}]},
         //sword.blade,
-        { object: sword.stone, stopX: true}
+        { object: sword.stone, stopX: true, ops: [{translate: [0, 40]}, {scale:[0.7, 0.7, 0.7]}]},
+        { object: shield.complete, stopX: true, ops: [{rotate: [0, 180]}]},
+        { object: shield.completeDragon, stopX: true},
+        { object: helmet.complete},
+        { object: armor.complete, stopX: true, ops: [{rotate: [0, 180]}]},
+        { object: armor.completeDragon, stopX: true}
     ];
 
     // BLOX: CSG: ADD

@@ -52,11 +52,11 @@ var BLOX = new function() {
                 firstCsg = csgs.shift();
             }
             if (csgs.length) {
-                csgs.forEach(function (csg, index) {
+                csgs.forEach(function (csg) {
                     if (!unionCsg) {
                         unionCsg = csg;
                     } else {
-                        unionCsg = unionCsg.union(csg);
+                        unionCsg = csg.union(unionCsg);
                     }
                 });
                 var subtractCsg = firstCsg.subtract(unionCsg);
@@ -74,11 +74,11 @@ var BLOX = new function() {
             });
             var firstCsg = mesh ? new CSG(mesh) : null,
                 unionCsg = firstCsg;
-            csgs.forEach(function (csg, index) {
+            csgs.forEach(function (csg) {
                 if (!unionCsg) {
                     unionCsg = csg;
                 } else {
-                    unionCsg = unionCsg.union(csg);
+                    unionCsg = csg.union(unionCsg);
                 }
             });
             mesh = unionCsg.toMesh();
@@ -96,7 +96,7 @@ var BLOX = new function() {
                 if (!intersectCsg) {
                     intersectCsg = csg;
                 } else {
-                    intersectCsg = intersectCsg.intersect(csg);
+                    intersectCsg = csg.intersect(intersectCsg);
                 }
             });
             mesh = intersectCsg.toMesh();
@@ -123,6 +123,11 @@ var BLOX = new function() {
         if (csg.color || csg.texture || csg.mesh) {
             var materialCfg = {};
             materialCfg.color = csg.color || DEFAULT_COLOR;
+            if (csg.image) {
+                var texture = textureCache[csg.image] = textureCache[csg.image] ||
+                    new THREE.TextureLoader().load(csg.image);
+                materialCfg.map = texture;
+            }
             if (csg.texture) {
                 var texture = textureCache[csg.texture] = textureCache[csg.texture] ||
                         new THREE.TextureLoader().load(csg.texture);
